@@ -57,6 +57,25 @@ module Var = struct
         compare (unique_name x1) (unique_name x2)
 end
 
+module RuntimeName = struct
+    type t = int
+    [@@name "rtname"]
+    [@@deriving visitors { variety = "map"; data = false }]
+ 
+    (* Accessors *)
+    let name x = x
+ 
+    let source = ref 0
+ 
+    let make () = 
+        let res = !source in
+        incr source;
+        res
+ 
+    (* Display *)
+    let pp ppf x = Format.pp_print_string ppf (string_of_int x)
+end
+
 
 type program = {
     prog_interfaces: (Interface.t[@name "interface"]) list;
