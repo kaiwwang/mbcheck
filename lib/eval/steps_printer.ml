@@ -43,17 +43,15 @@ let show_inbox inbox =
   let messages_str = List.map show_message inbox in
   "[" ^ (String.concat "; " messages_str) ^ "]\n"
 
+
 let print_mailbox_map mailbox_map =
   let b = Buffer.create 100 in 
-  Buffer.add_string b "\nGlobal mailbox mapping:";
-  let mailbox_list = Hashtbl.fold (fun x_name pid acc -> (pid, x_name) :: acc) mailbox_map [] in
-  let sorted_mailbox_list = List.sort (fun (pid1, _) (pid2, _) -> compare pid1 pid2) mailbox_list in
-  List.iter (fun (pid, x_name) ->
-    Buffer.add_string b (Printf.sprintf "\n  PID: %d -> Name: %s" pid x_name)
-  ) sorted_mailbox_list;
+  Hashtbl.iter (fun m messages ->
+    let messages_str = List.fold_left (fun acc msg -> acc ^ show_message msg ^ "; ") "" messages in
+    Buffer.add_string b (Printf.sprintf "\nMailbox: %s, Messages: [%s]\n" (RuntimeName.name m^(string_of_int m.id)) messages_str)
+  ) mailbox_map;
   Buffer.contents b
   
-
 (* Convert a value to its string representation. *)
 let show_value v =
   match v with
@@ -74,7 +72,7 @@ let show_value v =
     let body_str = show_comp body
     in
     Printf.sprintf "Lam (%s): { %s }" params_str  body_str
-  | Mailbox s -> Printf.sprintf "Mailbox %s" s
+  | Mailbox m -> Printf.sprintf "Mailbox %s%d" m.name m.id
   | _ -> "Other value"
 
 let name_or_id x = 

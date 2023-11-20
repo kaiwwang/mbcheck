@@ -14,7 +14,7 @@ type execution_status =
   | Unfinished
   | Spawned of process 
   | MessageToSend of value * message
-  | Blocked
-  | FreeMailbox of string
+  | Blocked of RuntimeName.t
+  | FreeMailbox of RuntimeName.t
 
 

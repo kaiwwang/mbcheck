@@ -12,7 +12,12 @@ let generate_new_pid () =
   pid
 
 
-let mailbox_map : (string,pid) Hashtbl.t = Hashtbl.create 100
+let mailbox_map : (RuntimeName.t,message list) Hashtbl.t = Hashtbl.create 100
+let blocked_processes : (RuntimeName.t,process) Hashtbl.t = Hashtbl.create 100
+
+
+let add_process_to_blocked_list mailbox_name process =
+  Hashtbl.add blocked_processes mailbox_name process
   
 
 let substitute_in_message env target message =
@@ -29,37 +34,40 @@ let substitute_in_message env target message =
   let substituted_message = List.map substitute_value message in
   (substituted_target, substituted_message)
   
-let find_pid_by_name name =
-  match Hashtbl.find_opt mailbox_map name with
-  | Some pid -> pid
-  | None -> -1
 
-let rec add_message_to_mailbox blocked_processes target_name message updated_blocked_processes current_pid =
+let add_message_to_mailbox target_name message current_pid =
   match target_name with
   | Mailbox m ->
-      (match blocked_processes with
-      | [] -> None
-      | (prog, pid, steps, inbox, comp, env, cont) as current_process :: rest -> 
-          let target_pid = find_pid_by_name m in
-          if pid = target_pid then begin
-              Buffer.add_string steps_buffer (Printf.sprintf "\n -> -> Process %d send a message to Process %d(%s)-> ->\n" current_pid pid m);
-              let updated_process = (prog, pid, steps, message :: inbox, comp, env, cont) in
-              Some (updated_process, (List.rev (updated_blocked_processes) @ rest))
-          end else
-            add_message_to_mailbox rest target_name message (current_process :: updated_blocked_processes) current_pid)
-  | _ -> 
-      failwith_and_print_buffer "Expected a variable"      
+      let msg_list = 
+        match Hashtbl.find_opt mailbox_map m with
+          | Some msg_list -> 
+            Buffer.add_string steps_buffer (Printf.sprintf "\n -> -> Process %d send a message to Mailbox: %s-> ->\n" current_pid (m.name^(string_of_int m.id)));
+            msg_list
+          | None -> failwith_and_print_buffer "Mailbox not found"
+      in
+      Hashtbl.replace mailbox_map m (message :: msg_list);
+      let updated_process = 
+        match Hashtbl.find_opt blocked_processes m with
+          | Some process -> 
+              Hashtbl.remove blocked_processes m;
+              [process]
+          | _ -> []
+      in
+      updated_process
+  | _ -> failwith_and_print_buffer "Expected a Mailbox value"
+      
   
   
-let rec extract_message tag (inbox: inbox) : message * inbox =
-  match inbox with
+let rec extract_message tag mailboxName msg_list =
+  match msg_list with
   | [] -> failwith_and_print_buffer "No message with the given tag"
   | (msg_tag, _) as message :: rest ->
       if msg_tag = tag then
-        (message, rest)
+        (Hashtbl.replace mailbox_map mailboxName rest;
+        message)
       else
-        let (found_payload, new_mailbox) = extract_message tag rest in
-        (found_payload, message :: new_mailbox)
+        let found_payload = extract_message tag mailboxName rest in
+        found_payload
         
 let bind_env msg payload_binders env target mailbox_binder =
   match msg with
@@ -89,43 +97,43 @@ let free_mailbox mailbox_binder env pid_to_check =
               (acc_name, (v, value) :: acc_env)
         ) env (None, [])
         in
-        let mailbox_list = Hashtbl.fold (fun m pid acc -> (m, pid) :: acc) mailbox_map [] in
-        let _, remaining_mailboxes = 
-          List.partition (fun (name, pid) -> 
-            pid = pid_to_check && (match matched_mailbox_name with
-                                  | Some matched_name -> 
-                                      Buffer.add_string steps_buffer (Printf.sprintf "\n******** Mailbox %s(PID:%d) has been freed \u{221A} ********\n" matched_name pid);
-                                      name = matched_name
-                                  | None -> false)
-          ) mailbox_list in
-        Hashtbl.clear mailbox_map;
-        
-        List.iter (fun (m, pid) -> Hashtbl.add mailbox_map m pid) remaining_mailboxes;
-        updated_env,(binder.name ^ string_of_int binder.id))
+        match matched_mailbox_name with
+          | Some m -> 
+              Buffer.add_string steps_buffer (Printf.sprintf "\n -> -> Process %d freed Mailbox:(%s)-> ->\n" pid_to_check (m.name^(string_of_int m.id)));
+              Hashtbl.remove mailbox_map m;
+              updated_env,m
+          | None -> failwith_and_print_buffer "Mailbox not found")
   | _ -> 
     failwith_and_print_buffer "Expected a variable for mailbox binder"   
-
-
       
-let update_processes_after_free processes mailboxName =
-  List.map (fun (prog, pid, steps, inbox, comp, env, stack) ->
-    let updated_env = List.filter (fun (v, value) ->
-      match value with
-      | Mailbox _ -> (Binder.name v ^ string_of_int v.id) <> mailboxName
-      | _ -> true
-    ) env in
-    let updated_stack = List.map (fun frame ->
-      match frame with
-      | Frame (binder, frame_env, frame_comp) ->
-          let updated_frame_env = List.filter (fun (v, value) ->
-            match value with
-            | Mailbox _ -> (Binder.name v ^ string_of_int v.id) <> mailboxName
-            | _ -> true
-          ) frame_env in
-          Frame (binder, updated_frame_env, frame_comp)
-    ) stack in
-    (prog, pid, steps, inbox, comp, updated_env, updated_stack)
-  ) processes
+let update_process_after_free (prog, pid, steps, inbox, comp, env, stack) mailbox =
+  let updated_env = List.filter (fun (v, value) ->
+    match value with
+    | Mailbox _ -> (Binder.name v ^ string_of_int v.id) <> (RuntimeName.name mailbox^ string_of_int mailbox.id)
+    | _ -> true
+  ) env in
+  let updated_stack = List.map (fun frame ->
+    match frame with
+    | Frame (binder, frame_env, frame_comp) ->
+        let updated_frame_env = List.filter (fun (v, value) ->
+          match value with
+          | Mailbox _ -> (Binder.name v ^ string_of_int v.id) <> (RuntimeName.name mailbox^ string_of_int mailbox.id)
+          | _ -> true
+        ) frame_env in
+        Frame (binder, updated_frame_env, frame_comp)
+  ) stack in
+  (prog, pid, steps, inbox, comp, updated_env, updated_stack)
+
+let update_processes_after_free processes mailbox = 
+  let new_processes =   
+    (List.map (fun process ->
+    update_process_after_free process mailbox
+  ) processes) in
+  Hashtbl.iter (fun m p ->
+    let new_peocess = update_process_after_free p mailbox in
+    Hashtbl.replace blocked_processes m new_peocess
+  ) blocked_processes;
+  new_processes
     
       
 let find_decl name decls =
