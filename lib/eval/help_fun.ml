@@ -106,7 +106,7 @@ let free_mailbox mailbox_binder env pid_to_check =
   | _ -> 
     failwith_and_print_buffer "Expected a variable for mailbox binder"   
       
-let update_process_after_free (prog, pid, steps, inbox, comp, env, stack) mailbox =
+let update_process_after_free (prog, pid, steps, comp, env, stack) mailbox =
   let updated_env = List.filter (fun (v, value) ->
     match value with
     | Mailbox _ -> (Binder.name v ^ string_of_int v.id) <> (RuntimeName.name mailbox^ string_of_int mailbox.id)
@@ -122,7 +122,7 @@ let update_process_after_free (prog, pid, steps, inbox, comp, env, stack) mailbo
         ) frame_env in
         Frame (binder, updated_frame_env, frame_comp)
   ) stack in
-  (prog, pid, steps, inbox, comp, updated_env, updated_stack)
+  (prog, pid, steps, comp, updated_env, updated_stack)
 
 let update_processes_after_free processes mailbox = 
   let new_processes =   

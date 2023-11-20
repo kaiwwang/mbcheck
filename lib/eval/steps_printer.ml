@@ -28,7 +28,7 @@ let process_buffer_print () =
 let result_buffer_print () = 
   Printf.printf "\n%s\n\n" (Buffer.contents result_buffer)
 
-
+  
 let failwith_and_print_buffer msg =
   steps_buffer_print (); 
   process_buffer_print ();
@@ -39,17 +39,14 @@ let show_message (tag, values) =
   let values_str = List.map show_value values |> String.concat ", " in
   Printf.sprintf "(%s, [%s])" tag values_str
 
-let show_inbox inbox =
-  let messages_str = List.map show_message inbox in
-  "[" ^ (String.concat "; " messages_str) ^ "]\n"
-
-
 let print_mailbox_map mailbox_map =
-  let b = Buffer.create 100 in 
-  Hashtbl.iter (fun m messages ->
+  let b = Buffer.create 100 in
+  let mailboxes = Hashtbl.fold (fun m messages acc -> (m, messages) :: acc) mailbox_map [] in
+  let sorted_mailboxes = List.sort (fun (m1, _) (m2, _) -> compare (RuntimeName.id m1) (RuntimeName.id m2)) mailboxes in
+  List.iter (fun (m, messages) ->
     let messages_str = List.fold_left (fun acc msg -> acc ^ show_message msg ^ "; ") "" messages in
-    Buffer.add_string b (Printf.sprintf "\nMailbox: %s, Messages: [%s]\n" (RuntimeName.name m^(string_of_int m.id)) messages_str)
-  ) mailbox_map;
+    Buffer.add_string b (Printf.sprintf "\nMailbox: %s, Messages: [%s]\n" (RuntimeName.name m ^ string_of_int m.id) messages_str)
+  ) sorted_mailboxes;
   Buffer.contents b
   
 (* Convert a value to its string representation. *)
@@ -94,7 +91,7 @@ let show_frame_stack stack =
   "[" ^ (String.concat "; " frames) ^ "]"
 
 (* Print the current configuration. *)
-let print_config (comp, env, stack, steps, pid,inbox, mailbox_map) =
+let print_config (comp, env, stack, steps, pid, mailbox_map) =
   counter := !counter + 1;
   let step_str = Printf.sprintf "\n------------------- Total step %d --------------------\n" !counter in
   let mailbox_map = print_mailbox_map mailbox_map in
@@ -103,5 +100,4 @@ let print_config (comp, env, stack, steps, pid,inbox, mailbox_map) =
   let comp_str = Printf.sprintf "Comp: %s\n\n" (show_comp comp) in
   let env_str = Printf.sprintf "Env: %s\n\n" (show_env env) in
   let frame_stack_str = Printf.sprintf "Frame Stack: %s\n" (show_frame_stack stack) in
-  let inbox_str = Printf.sprintf "inbox: %s\n" (show_inbox inbox) in
-  step_str ^ mailbox_map ^ steps_str ^ inbox_str^ comp_str ^ env_str ^ frame_stack_str
+  step_str ^ mailbox_map ^ steps_str ^ comp_str ^ env_str ^ frame_stack_str
