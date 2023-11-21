@@ -56,18 +56,19 @@ let add_message_to_mailbox target_name message current_pid =
       updated_process
   | _ -> failwith_and_print_buffer "Expected a Mailbox value"
       
-  
-  
-let rec extract_message tag mailboxName msg_list =
-  match msg_list with
-  | [] -> failwith_and_print_buffer "No message with the given tag"
-  | (msg_tag, _) as message :: rest ->
-      if msg_tag = tag then
-        (Hashtbl.replace mailbox_map mailboxName rest;
-        message)
-      else
-        let found_payload = extract_message tag mailboxName rest in
-        found_payload
+let extract_message tag mailboxName msg_list =
+  let rec aux acc = function
+    | [] -> failwith_and_print_buffer "No message with the given tag"
+    | (msg_tag, _) as message :: rest ->
+        if msg_tag = tag then
+          begin
+            Hashtbl.replace mailbox_map mailboxName (List.rev_append acc rest);
+            message
+          end
+        else
+          aux (message :: acc) rest
+  in
+  aux [] msg_list 
         
 let bind_env msg payload_binders env target mailbox_binder =
   match msg with
@@ -150,9 +151,13 @@ let rec lookup env x =
       if Var.id x = Var.id (Var.of_binder y) then v
       else lookup env' x
 
-let eval_of_var env v = 
+let rec eval_of_var env v = 
   match v with
   | Variable (var_name, _) -> lookup env var_name
+  | Pair (v1, v2) -> 
+    let evaluated_v1 = eval_of_var env v1 in
+    let evaluated_v2 = eval_of_var env v2 in
+    Pair (evaluated_v1, evaluated_v2)
   | c -> c
 
 let eval_args args env =

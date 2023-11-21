@@ -22,13 +22,12 @@ let process_buffer_print () =
     let pid_str = if pid = 1 then "1(Main)" else string_of_int pid in
     Printf.printf "Total steps of PID %s: %d\n" pid_str steps
   ) sorted_steps;
-  Printf.printf "\n>>>>>>>> Program done \u{221A} <<<<<<<<\n"
+  Printf.printf "\n>>>>>>>> Program done \u{2705} <<<<<<<<\n"
   
 
 let result_buffer_print () = 
   Printf.printf "\n%s\n\n" (Buffer.contents result_buffer)
 
-  
 let failwith_and_print_buffer msg =
   steps_buffer_print (); 
   process_buffer_print ();
@@ -45,9 +44,20 @@ let print_mailbox_map mailbox_map =
   let sorted_mailboxes = List.sort (fun (m1, _) (m2, _) -> compare (RuntimeName.id m1) (RuntimeName.id m2)) mailboxes in
   List.iter (fun (m, messages) ->
     let messages_str = List.fold_left (fun acc msg -> acc ^ show_message msg ^ "; ") "" messages in
-    Buffer.add_string b (Printf.sprintf "\nMailbox: %s, Messages: [%s]\n" (RuntimeName.name m ^ string_of_int m.id) messages_str)
+    Buffer.add_string b (Printf.sprintf "\nMailbox: %s, Messages: [%s]\n" (RuntimeName.name m ^"_"^string_of_int m.id) messages_str)
   ) sorted_mailboxes;
   Buffer.contents b
+
+let print_blocked_processes blocked_processes =
+  let b = Buffer.create 100 in
+  Buffer.add_string b (Printf.sprintf "\nBlocked process:\n");
+  let processes_list = Hashtbl.fold (fun m process acc -> (m, process) :: acc) blocked_processes [] in
+  let sorted_processes = List.sort (fun (_, (_, pid1, _, _, _, _)) (_, (_, pid2, _, _, _, _)) -> compare pid1 pid2) processes_list in
+  List.iter (fun (m, (_, pid, _, _, _, _)) ->
+    Buffer.add_string b (Printf.sprintf "\n   Mailbox: %s -> ID: %d \n" (RuntimeName.name m ^"_"^string_of_int m.id) pid)
+  ) sorted_processes;
+  Buffer.contents b
+
   
 (* Convert a value to its string representation. *)
 let show_value v =
@@ -91,13 +101,14 @@ let show_frame_stack stack =
   "[" ^ (String.concat "; " frames) ^ "]"
 
 (* Print the current configuration. *)
-let print_config (comp, env, stack, steps, pid, mailbox_map) =
+let print_config (comp, env, stack, steps, pid, mailbox_map, blocked_processes) =
   counter := !counter + 1;
   let step_str = Printf.sprintf "\n------------------- Total step %d --------------------\n" !counter in
   let mailbox_map = print_mailbox_map mailbox_map in
+  let blocked_processes = print_blocked_processes blocked_processes in
   let pid_str = if pid = 1 then "1(Main)" else string_of_int pid in
   let steps_str = Printf.sprintf "\n\nCurrent PID: %s Steps: %d\n\n" pid_str steps in
   let comp_str = Printf.sprintf "Comp: %s\n\n" (show_comp comp) in
   let env_str = Printf.sprintf "Env: %s\n\n" (show_env env) in
   let frame_stack_str = Printf.sprintf "Frame Stack: %s\n" (show_frame_stack stack) in
-  step_str ^ mailbox_map ^ steps_str ^ comp_str ^ env_str ^ frame_stack_str
+  step_str ^ mailbox_map^ blocked_processes ^ steps_str ^ comp_str ^ env_str ^ frame_stack_str
