@@ -57,6 +57,31 @@ module Var = struct
         compare (unique_name x1) (unique_name x2)
 end
 
+module RuntimeName = struct
+    type t = { id: int; name: string }
+    [@@name "rtname"]
+    [@@deriving visitors { variety = "map"; data = false }]
+ 
+    (* Accessors *)
+    let id x = x.id
+    let name x = x.name
+
+    let source = ref 0
+
+    let gen () =
+        let res = !source in
+        incr source;
+        res
+
+    let make ?(name="") () =
+        { id = gen (); name = name }
+
+    (* Display *)
+    let pp ppf x =
+        let prefix =
+            if x.name = "" then "_" else x.name in
+        Format.pp_print_string ppf (prefix ^ (string_of_int x.id))
+end
 
 type program = {
     prog_interfaces: (Interface.t[@name "interface"]) list;
@@ -118,8 +143,8 @@ and value =
         linear: bool;
         parameters: ((Binder.t[@name "binder"]) * (Type.t[@name "ty"])) list;
         result_type: (Type.t[@name "ty"]);
-        body: comp
-    }
+        body: comp}
+    | Mailbox of (RuntimeName.t[@name "rtname"])
 and message = (string * value list)
     [@@name "msg"]
 and primitive_name = string
@@ -138,7 +163,7 @@ and guard =
         variety = "map";
         ancestors = [
             "Type.map"; "Pretype.map"; "Binder.map";
-            "Interface.map"; "Var.map"];
+            "Interface.map"; "Var.map"; "RuntimeName.map"];
         data = false },
     show]
 
@@ -253,6 +278,7 @@ and pp_value ppf = function
             (pp_print_comma_list pp_param) parameters
             Type.pp result_type
             pp_comp body
+    | Mailbox m -> fprintf ppf "mailbox(%a)" RuntimeName.pp m
 and pp_guard ppf = function
     | Receive { tag; payload_binders; mailbox_binder; cont } ->
             fprintf ppf "receive %s(%a) from %a ->@,@[<v 2>  %a@]"
@@ -284,11 +310,11 @@ let substitute_solution sol =
     let visitor =
         object
             inherit [_] map
-
+            
             method! visit_PatVar _env x =
                 match StringMap.find_opt x sol with
-                    | Some ty -> ty
-                    | None -> Type.Pattern.PatVar x
+                | Some ty -> ty
+                | None -> Type.Pattern.PatVar x
         end
     in
     visitor#visit_program ()
