@@ -1,7 +1,7 @@
 open Common.Ir
 open Eval_types
 open Steps_printer
-
+open Common
 let step_limit = 30
 
 let global_pid_counter = ref 1
@@ -41,7 +41,7 @@ let add_message_to_mailbox target_name message current_pid =
       let msg_list = 
         match Hashtbl.find_opt mailbox_map m with
           | Some msg_list -> 
-            Buffer.add_string steps_buffer (Printf.sprintf "\n -> -> Process %d send a message to Mailbox: %s-> ->\n" current_pid (m.name^(string_of_int m.id)));
+            Buffer.add_string steps_buffer (Printf.sprintf "\n -> -> Process %d send a message to Mailbox: %s \u{1F4E8} -> ->\n" current_pid (m.name^(string_of_int m.id)));
             msg_list
           | None -> failwith_and_print_buffer "Mailbox not found"
       in
@@ -86,6 +86,31 @@ let bind_env msg payload_binders env target mailbox_binder =
           failwith_and_print_buffer "Target variable not found in environment")
       | _ -> failwith_and_print_buffer "Expected a variable for target")
 
+let mailbox_reference_in_messages mailbox =
+  Hashtbl.fold (fun _ messages acc ->
+    if acc then true
+    else
+      List.exists (fun (_, values) ->
+        List.exists (function
+          | Mailbox m -> m = mailbox 
+          | _ -> false
+        ) values
+      ) messages
+  ) mailbox_map false
+      
+
+let rec contains_one = function
+    | Type.Pattern.One -> true
+    | PatVar _ | Zero | Message _ -> false
+    | Plus (p1, p2) | Concat (p1, p2) -> contains_one p1 || contains_one p2
+    | Many p -> contains_one p
+
+
+let find_free_guard guards = 
+  (match List.find (function Free _ -> true | _ -> false) guards with
+            |  (Free comp) -> comp
+            | _ -> failwith_and_print_buffer "No Free guard matched")
+
 let free_mailbox mailbox_binder env pid_to_check =
   match mailbox_binder with
   | Variable (binder, _) ->
@@ -100,7 +125,7 @@ let free_mailbox mailbox_binder env pid_to_check =
         in
         match matched_mailbox_name with
           | Some m -> 
-              Buffer.add_string steps_buffer (Printf.sprintf "\n -> -> Process %d freed Mailbox:(%s)-> ->\n" pid_to_check (m.name^(string_of_int m.id)));
+              Buffer.add_string steps_buffer (Printf.sprintf "\n -> -> Process %d freed Mailbox:(%s) \u{1F535}-> ->\n" pid_to_check (m.name^(string_of_int m.id)));
               Hashtbl.remove mailbox_map m;
               updated_env,m
           | None -> failwith_and_print_buffer "Mailbox not found")
