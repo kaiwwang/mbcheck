@@ -34,15 +34,22 @@ let process filename is_verbose is_debug is_ir is_reduct_steps mode benchmark_co
         let temp = Frontend.Parse.parse_file filename ()
             |> Frontend.Pipeline.pipeline in
         let (_, _, ir_program, _, _, _) = temp in
+
+        let start_time = Unix.gettimeofday () in 
         let _ = Generator.generate ir_program in
+        let end_time = Unix.gettimeofday () in    
+        let elapsed_time = end_time -. start_time in 
+              
         if is_ir then 
             print_ir temp
         else 
             print_result temp;
-        if is_reduct_steps then 
+        if is_reduct_steps then begin
             Eval.Steps_printer.steps_buffer_print ();
-        Eval.Steps_printer.process_buffer_print ();
+            Eval.Steps_printer.process_buffer_print ()
+            end;
         Eval.Steps_printer.result_buffer_print ();
+        Printf.printf "Run time: %.5f µs\n" (elapsed_time *.1000000.0 );
     with
         | e ->
             Errors.format_error e;

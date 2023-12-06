@@ -44,7 +44,7 @@ let print_mailbox_map mailbox_map =
   let sorted_mailboxes = List.sort (fun (m1, _) (m2, _) -> compare (RuntimeName.id m1) (RuntimeName.id m2)) mailboxes in
   List.iter (fun (m, messages) ->
     let messages_str = List.fold_left (fun acc msg -> acc ^ show_message msg ^ "; ") "" messages in
-    Buffer.add_string b (Printf.sprintf "\nMailbox: %s, Messages: [%s]\n" (RuntimeName.name m ^"_"^string_of_int m.id) messages_str)
+    Buffer.add_string b (Printf.sprintf "\nMailbox: %s, Messages: [%s]\n" (RuntimeName.name m ^string_of_int m.id) messages_str)
   ) sorted_mailboxes;
   Buffer.contents b
 
@@ -54,7 +54,7 @@ let print_blocked_processes blocked_processes =
   let processes_list = Hashtbl.fold (fun m process acc -> (m, process) :: acc) blocked_processes [] in
   let sorted_processes = List.sort (fun (_, (_, pid1, _, _, _, _)) (_, (_, pid2, _, _, _, _)) -> compare pid1 pid2) processes_list in
   List.iter (fun (m, (_, pid, _, _, _, _)) ->
-    Buffer.add_string b (Printf.sprintf "\n   Mailbox: %s -> ID: %d \n" (RuntimeName.name m ^"_"^string_of_int m.id) pid)
+    Buffer.add_string b (Printf.sprintf "\n   Mailbox: %s -> ID: %d \n" (RuntimeName.name m^string_of_int m.id) pid)
   ) sorted_processes;
   Buffer.contents b
 
@@ -114,10 +114,9 @@ let print_config (comp, env, stack, steps, pid, mailbox_map, blocked_processes) 
   step_str ^ mailbox_map^ blocked_processes ^ steps_str ^ comp_str ^ env_str ^ frame_stack_str
 
 
-let print_config11 (comp, env, stack) =
+let print_config11 (comp,stack) =
   counter := !counter + 1;
   let step_str = Printf.sprintf "\n------------------- Total step %d --------------------\n" !counter in
   let comp_str = Printf.sprintf "Comp: %s\n\n" (show_comp comp) in
-  let env_str = Printf.sprintf "Env: %s\n\n" (show_env env) in
   let frame_stack_str = Printf.sprintf "Frame Stack: %s\n" (show_frame_stack stack) in
-  step_str ^ comp_str ^ env_str ^ frame_stack_str
+  step_str ^ comp_str ^ frame_stack_str

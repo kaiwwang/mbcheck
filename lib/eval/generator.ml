@@ -7,7 +7,7 @@ open Help_fun
 open Checker
 
 let rec execute (program,pid,steps,comp,env,stack) =
-  Buffer.add_string steps_buffer (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes));
+  (* Buffer.add_string steps_buffer (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes)); *)
   (* Printf.printf "%s" (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes)); *)
 
   let current_steps = Hashtbl.find_opt step_counts pid |> Option.value ~default:0 in
@@ -161,7 +161,6 @@ let rec execute (program,pid,steps,comp,env,stack) =
         | Type.Pattern.Zero ->
           failwith_and_print_buffer "Zero pattern not supported"
         | _ ->
-
           let need_free_check = (match List.find_opt (function Free _ -> true | _ -> false) guards with
                 | Some (Free _) -> true
                 | _ -> false) 
@@ -174,22 +173,12 @@ let rec execute (program,pid,steps,comp,env,stack) =
                     | Some msg_list -> 
                         (let rec match_guards need_free_check = function
                           | Receive {tag; payload_binders; mailbox_binder; cont} :: rest ->
-
-                            let need_free_check1 = (match cont with
-                            | Guard {target = _; pattern; guards = _; _} ->
-                                (match pattern with
-                                | Type.Pattern.One -> false
-                                | _ -> need_free_check)
-                            | _ -> need_free_check
-                              ) in
-
-
                               if List.exists (fun (msg_tag, _) -> msg_tag = tag) msg_list then
                                 let message_to_process = extract_message tag mailbox_name msg_list in
                                 let new_env = bind_env message_to_process payload_binders env target mailbox_binder in
                                 execute (program, pid, steps+1, cont, new_env, stack)
                               else
-                                match_guards need_free_check1 rest
+                                match_guards need_free_check rest
                           | [] -> 
                             (Blocked (need_free_check, mailbox_name), (program,pid, steps, comp, env, stack))
                           | _ :: rest ->  match_guards need_free_check rest in
