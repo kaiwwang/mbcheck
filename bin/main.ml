@@ -39,7 +39,7 @@ let process filename is_verbose is_debug is_ir is_reduct_steps mode benchmark_co
         let _ = Generator.generate ir_program in
         let end_time = Unix.gettimeofday () in    
         let elapsed_time = end_time -. start_time in 
-              
+        
         if is_ir then 
             print_ir temp
         else 

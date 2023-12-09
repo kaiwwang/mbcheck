@@ -16,4 +16,6 @@ type execution_status =
   | Blocked of bool * RuntimeName.t
   | FreeMailbox of RuntimeName.t
 
+type func_var_args = Var.t * value list 
+
 

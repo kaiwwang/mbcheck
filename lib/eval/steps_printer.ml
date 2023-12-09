@@ -1,6 +1,8 @@
 open Common.Ir
 open Eval_types
 
+let mailbox_counting : (Binder.t list, int) Hashtbl.t = Hashtbl.create 100
+
 let step_counts : (int, int) Hashtbl.t = Hashtbl.create 10
 
 let counter = ref 0
@@ -69,7 +71,7 @@ let show_value v =
   | Primitive (name) -> Printf.sprintf "%s" name
   | Inl v -> Printf.sprintf "Inl %s" (show_value v)
   | Inr _ -> Printf.sprintf "Inr %s" (show_value v)
-  | Variable (x, _) -> Var.name x 
+  | Variable (x, _) -> Printf.sprintf "%s%d" (Var.name x) x.id
   | Pair (v1, v2) -> Printf.sprintf "(%s, %s)" (show_value v1) (show_value v2)
   | Lam {linear; parameters; result_type; body} ->
     let _ = linear in let _ = result_type in

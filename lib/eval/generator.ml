@@ -7,7 +7,14 @@ open Help_fun
 open Checker
 
 let rec execute (program,pid,steps,comp,env,stack) =
-  (* Buffer.add_string steps_buffer (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes)); *)
+
+  Buffer.add_string steps_buffer (Printf.sprintf "\nMailbox_counting:\n");
+  Hashtbl.iter (fun key_list value ->
+    let key_str = List.map (fun key -> Binder.name key ^ (string_of_int (Binder.id key))) key_list |> String.concat ", " in
+    Buffer.add_string steps_buffer (Printf.sprintf "  Key: [%s], Value: %d\n" key_str value)
+  ) mailbox_counting;
+
+  Buffer.add_string steps_buffer (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes));
   (* Printf.printf "%s" (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes)); *)
 
   let current_steps = Hashtbl.find_opt step_counts pid |> Option.value ~default:0 in
@@ -51,6 +58,16 @@ let rec execute (program,pid,steps,comp,env,stack) =
 
     | Return v, env, Frame (x, env', cont) :: stack ->
       let result = eval_of_var env v in
+      (* update mailbox counting *)
+      let arg_str = show_value v in 
+      Hashtbl.iter (fun key_list count ->
+        List.iter (fun key ->
+            let key_str = Binder.name key ^ (string_of_int (key.id)) in
+            if arg_str = key_str then
+                Hashtbl.replace mailbox_counting key_list (count - 1)
+        ) key_list
+      ) mailbox_counting;
+
       execute (program,pid, steps+1,cont, (x, result) :: env', stack)
 
     | App {func; args}, env, stack -> 
@@ -106,6 +123,19 @@ let rec execute (program,pid,steps,comp,env,stack) =
           (match find_decl func_name program.prog_decls with
           | Some func_decl ->
               let env' = bind_args_paras (List.map (fun arg -> eval_of_var env arg) args) (func_decl.decl_parameters) in
+
+              (* update mailbox counting *)
+              List.iter (fun arg ->
+                let arg_str = show_value arg in 
+                Hashtbl.iter (fun key_list count ->
+                    List.iter (fun key ->
+                        let key_str = Binder.name key ^ (string_of_int (key.id)) in
+                        if arg_str = key_str then
+                            Hashtbl.replace mailbox_counting key_list (count - 1)
+                    ) key_list
+                ) mailbox_counting
+            ) args;
+              
               execute (program,pid, steps+1,func_decl.decl_body, env', stack)
           | None ->
             (match List.find_opt (fun v -> match v with
@@ -150,6 +180,16 @@ let rec execute (program,pid,steps,comp,env,stack) =
         (Spawned new_process, (program, pid,steps+1, Return (Constant Unit), env, stack))
     
     | Send {target; message; _}, env, stack ->
+      (* update mailbox counting *)
+      let arg_str = show_value target in 
+      Hashtbl.iter (fun key_list count ->
+        List.iter (fun key ->
+            let key_str = Binder.name key ^ (string_of_int (key.id)) in
+            if arg_str = key_str then
+                Hashtbl.replace mailbox_counting key_list (count - 1)
+        ) key_list
+      ) mailbox_counting;
+
       (MessageToSend (target, message), (program, pid, steps+1, Return (Constant Unit), env, stack))
 
     | Guard {target; pattern; guards; _}, env, stack ->
@@ -217,7 +257,6 @@ let rec process_scheduling processes max_steps =
             let unblocked_process = add_message_to_mailbox substituted_target (tag,substituted_values) pid in 
                   process_scheduling ([updated_process] @ rest @ unblocked_process) max_steps
         | Blocked (need_free_check,mailbox)->
-
             if need_free_check && not (mailbox_reference_in_messages mailbox) then
               let all_processes = rest @
                 (Hashtbl.fold (fun _ process acc -> process :: acc) blocked_processes []) in
@@ -225,7 +264,29 @@ let rec process_scheduling processes max_steps =
                   List.exists (fun (v, value) ->
                     match value with
                     | Mailbox m when m = mailbox ->
-                        check_and_update_mailboxes (prog, comp'',stack'') (Var.of_binder v) []
+                        Printf.printf "\n这\n%s" (show_comp comp');
+                        Printf.printf "\nChecking mailbox %s\n" (RuntimeName.name m^(string_of_int(RuntimeName.id m)));
+                        
+                        let key_exists, key_with_v = 
+                          Hashtbl.fold (fun key _ (exists, key_with_v) ->
+                              if List.mem v key then
+                                  (true, key)
+                              else
+                                  (exists, key_with_v)
+                          ) mailbox_counting (false, [])
+                        in
+                        
+                        if not key_exists then
+                            Hashtbl.add mailbox_counting [v] 0;
+
+                        let should_process =
+                            if not key_exists || (key_exists && ((Hashtbl.find mailbox_counting key_with_v) = 0)) then
+                                let count = check_and_update_mailboxes (prog, comp'', stack'') v [] in
+                                count <> 0 
+                            else
+                                true
+                        in
+                        should_process
                     | _ -> false
                   ) env''
               ) all_processes then 
