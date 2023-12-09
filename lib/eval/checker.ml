@@ -31,7 +31,7 @@ let rec check_and_update_mailboxes (program,comp,stack) mailbox_reference mailbo
 
     | Return v,  Frame (new_mailbox_reference, _, cont) :: stack ->
         if (check_var v mailbox_reference) then
-            add_mailbox_count mailbox
+            add_mailbox_count mailbox 1
         else ();
         check_and_update_mailboxes (program, cont,  stack) new_mailbox_reference mailbox app_list 
 
@@ -58,7 +58,7 @@ let rec check_and_update_mailboxes (program,comp,stack) mailbox_reference mailbo
                       | Some (index, _) -> 
                             Printf.printf "+2\u{1F535}";
                             let (binder, _) = List.nth func_decl.decl_parameters index in
-                            add_mailbox_count mailbox;
+                            add_mailbox_count mailbox 1;
                             binder
                       | None -> 
                           mailbox_reference
@@ -85,7 +85,7 @@ let rec check_and_update_mailboxes (program,comp,stack) mailbox_reference mailbo
     
     | Send {target; message = _; _},  stack ->
         if (check_var target mailbox_reference) then
-            add_mailbox_count mailbox
+            add_mailbox_count mailbox 1
         else ();
         check_and_update_mailboxes (program, Return (Constant Unit),  stack) mailbox_reference mailbox app_list 
 
@@ -106,17 +106,53 @@ and check_var var mailbox_reference =
   | Variable (var,_) -> var.name^(string_of_int(var.id)) = mailbox_reference.name^(string_of_int(mailbox_reference.id))
   | _ -> false
 
-let process (program,comp,stack) mailbox_reference mailbox = 
-    check_and_update_mailboxes (program,comp,stack) mailbox_reference mailbox []
+let rec mailbox_counting_update mailbox all_processes = 
+    let mailbox_exists = 
+        Hashtbl.fold (fun mailbox' _ is_exists ->
+            if mailbox' = mailbox then
+                true
+            else
+                is_exists
+        ) mailbox_counting false
+    in
+
+    if not mailbox_exists then
+        Hashtbl.add mailbox_counting mailbox 0;
+
+    let should_process1 = 
+        let num = mailbox_reference_in_messages mailbox in
+        if num <> 0 then begin
+            add_mailbox_count mailbox num;
+            true
+        end
+        else
+            false
+    in
+
+    let should_process2 = List.exists (fun (prog, _, _, comp'', env'', stack'') ->
+        List.exists (fun (v, value) ->
+            match value with
+            | Mailbox m when m = mailbox ->
+            if not mailbox_exists || (mailbox_exists && ((Hashtbl.find mailbox_counting mailbox) = 0)) then
+                let count = check_and_update_mailboxes (prog, comp'', stack'') v mailbox [] in
+                count <> 0 
+            else
+                true
+            | _ -> false
+        ) env''
+    ) all_processes
+    in
+    should_process1 || should_process2
 
 and mailbox_reference_in_messages mailbox =
     Hashtbl.fold (fun _ messages acc ->
-      if acc then true
-      else
-        List.exists (fun (_, values) ->
-          List.exists (function
-            | Mailbox m -> m = mailbox 
-            | _ -> false
-          ) values
-        ) messages
-    ) mailbox_map false
+        if List.exists (fun (_, values) ->
+            List.exists (function
+              | Mailbox m -> m = mailbox 
+              | _ -> false
+            ) values
+          ) messages then
+            acc + 1
+        else
+            acc
+    ) mailbox_map 0

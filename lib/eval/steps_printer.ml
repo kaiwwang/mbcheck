@@ -1,9 +1,6 @@
 open Common.Ir
 open Eval_types
 
-let mailbox_counting : (RuntimeName.t, int) Hashtbl.t = Hashtbl.create 100
-
-
 let step_counts : (int, int) Hashtbl.t = Hashtbl.create 10
 
 let counter = ref 0

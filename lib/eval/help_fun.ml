@@ -14,6 +14,8 @@ let generate_new_pid () =
 
 let mailbox_map : (RuntimeName.t,message list) Hashtbl.t = Hashtbl.create 100
 let blocked_processes : (RuntimeName.t,process) Hashtbl.t = Hashtbl.create 100
+let mailbox_counting : (RuntimeName.t, int) Hashtbl.t = Hashtbl.create 100
+
 
 
 let add_process_to_blocked_list mailbox_name process =
@@ -85,23 +87,11 @@ let bind_env msg payload_binders env target mailbox_binder =
         | None ->
           failwith_and_print_buffer "Target variable not found in environment")
       | _ -> failwith_and_print_buffer "Expected a variable for target")
-
-let mailbox_reference_in_messages mailbox =
-  Hashtbl.fold (fun _ messages acc ->
-    if acc then true
-    else
-      List.exists (fun (_, values) ->
-        List.exists (function
-          | Mailbox m -> m = mailbox 
-          | _ -> false
-        ) values
-      ) messages
-  ) mailbox_map false
   
-let add_mailbox_count mailbox =
+let add_mailbox_count mailbox num =
   if Hashtbl.mem mailbox_counting mailbox then
       let current_count = Hashtbl.find mailbox_counting mailbox in
-      Hashtbl.replace mailbox_counting mailbox (current_count + 1)
+      Hashtbl.replace mailbox_counting mailbox (current_count + num)
 
 let minus_mailbox_count mailbox =
   if Hashtbl.mem mailbox_counting mailbox then

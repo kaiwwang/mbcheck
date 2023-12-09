@@ -242,59 +242,36 @@ let rec process_scheduling processes max_steps =
             let unblocked_process = add_message_to_mailbox substituted_target (tag,substituted_values) pid in 
                   process_scheduling ([updated_process] @ rest @ unblocked_process) max_steps
         | Blocked (need_free_check,mailbox)->
-            if need_free_check && not (mailbox_reference_in_messages mailbox) then
-              let all_processes = rest @
-                (Hashtbl.fold (fun _ process acc -> process :: acc) blocked_processes []) in
-              if List.exists (fun (prog, _, _, comp'', env'', stack'') ->
-                  List.exists (fun (v, value) ->
-                    match value with
-                    | Mailbox m when m = mailbox ->
-                        let mailbox_exists = 
-                          Hashtbl.fold (fun mailbox _ is_exists ->
-                              if m = mailbox then
-                                  true
-                              else
-                                  is_exists
-                          ) mailbox_counting false
-                        in
-                        
-                        if not mailbox_exists then
-                            Hashtbl.add mailbox_counting mailbox 0;
-
-                        let should_process =
-                            if not mailbox_exists || (mailbox_exists && ((Hashtbl.find mailbox_counting mailbox) = 0)) then
-                                let count = check_and_update_mailboxes (prog, comp'', stack'') v mailbox [] in
-                                count <> 0 
-                            else
-                                true
-                        in
-                        should_process
-                    | _ -> false
-                  ) env''
-              ) all_processes then 
-                begin
-                  Buffer.add_string steps_buffer (Printf.sprintf "\n******** Process %d Blocked \u{1F6AB} ********\n" pid);
-                  add_process_to_blocked_list mailbox updated_process;
-                  process_scheduling rest max_steps
-                end
-            else
+            let should_block = 
+              if need_free_check then
+                let all_processes = rest @
+                  (Hashtbl.fold (fun _ process acc -> process :: acc) blocked_processes []) in
+                  if mailbox_counting_update mailbox all_processes then 
+                    true
+                  else
+                    begin
+                    (match comp' with
+                      | Guard {target; pattern = _; guards; _} ->
+                        (match List.find_opt (function Free _ -> true | _ -> false) guards with
+                          | Some (Free comp'') ->
+                            let new_env, _ = free_mailbox target env' pid in
+                            let unblock_process = (prog', pid', step'+1, comp'', new_env, stack') in
+                            process_scheduling (unblock_process::rest) max_steps
+                          | _ -> failwith_and_print_buffer "No free guard found")
+                      | _ -> ());
+                      false
+                      end
+              else
+                true
+            in
+            if should_block then
               begin
-              (match comp' with
-                | Guard {target; pattern = _; guards; _} ->
-                  (match List.find_opt (function Free _ -> true | _ -> false) guards with
-                    | Some (Free comp'') ->
-                      let new_env, _ = free_mailbox target env' pid in
-                      let unblock_process = (prog', pid', step'+1, comp'', new_env, stack') in
-                      process_scheduling (unblock_process::rest) max_steps
-                    | _ -> failwith_and_print_buffer "No free guard found")
-                | _ -> ())
-                    end
-          else
-            begin
-              Buffer.add_string steps_buffer (Printf.sprintf "\n******** Process %d Blocked \u{1F6AB} ********\n" pid);
-              add_process_to_blocked_list mailbox updated_process;
-              process_scheduling rest max_steps
-            end
+                Buffer.add_string steps_buffer (Printf.sprintf "\n******** Process %d Blocked \u{1F6AB} ********\n" pid);
+                add_process_to_blocked_list mailbox updated_process;
+                process_scheduling rest max_steps
+              end
+            else
+              ()
 
         | FreeMailbox mailbox -> 
             let new_processes = update_processes_after_free (updated_process::rest) mailbox in
