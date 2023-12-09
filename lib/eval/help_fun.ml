@@ -97,7 +97,16 @@ let mailbox_reference_in_messages mailbox =
         ) values
       ) messages
   ) mailbox_map false
-      
+  
+let add_mailbox_count mailbox =
+  if Hashtbl.mem mailbox_counting mailbox then
+      let current_count = Hashtbl.find mailbox_counting mailbox in
+      Hashtbl.replace mailbox_counting mailbox (current_count + 1)
+
+let minus_mailbox_count mailbox =
+  if Hashtbl.mem mailbox_counting mailbox then
+      let current_count = Hashtbl.find mailbox_counting mailbox in
+      Hashtbl.replace mailbox_counting mailbox (current_count - 1)
 
 let rec contains_one = function
     | Type.Pattern.One -> true

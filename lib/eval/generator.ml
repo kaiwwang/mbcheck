@@ -9,9 +9,8 @@ open Checker
 let rec execute (program,pid,steps,comp,env,stack) =
 
   Buffer.add_string steps_buffer (Printf.sprintf "\nMailbox_counting:\n");
-  Hashtbl.iter (fun key_list value ->
-    let key_str = List.map (fun key -> Binder.name key ^ (string_of_int (Binder.id key))) key_list |> String.concat ", " in
-    Buffer.add_string steps_buffer (Printf.sprintf "  Key: [%s], Value: %d\n" key_str value)
+  Hashtbl.iter (fun key value ->
+    Buffer.add_string steps_buffer (Printf.sprintf "  Key: %s%d, Value: %d\n" (RuntimeName.name key) (key.id) value)
   ) mailbox_counting;
 
   Buffer.add_string steps_buffer (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes));
@@ -59,15 +58,10 @@ let rec execute (program,pid,steps,comp,env,stack) =
     | Return v, env, Frame (x, env', cont) :: stack ->
       let result = eval_of_var env v in
       (* update mailbox counting *)
-      let arg_str = show_value v in 
-      Hashtbl.iter (fun key_list count ->
-        List.iter (fun key ->
-            let key_str = Binder.name key ^ (string_of_int (key.id)) in
-            if arg_str = key_str then
-                Hashtbl.replace mailbox_counting key_list (count - 1)
-        ) key_list
-      ) mailbox_counting;
-
+      (match result with
+        | Mailbox m -> minus_mailbox_count m
+        | _ -> ()
+        );
       execute (program,pid, steps+1,cont, (x, result) :: env', stack)
 
     | App {func; args}, env, stack -> 
@@ -125,16 +119,11 @@ let rec execute (program,pid,steps,comp,env,stack) =
               let env' = bind_args_paras (List.map (fun arg -> eval_of_var env arg) args) (func_decl.decl_parameters) in
 
               (* update mailbox counting *)
-              List.iter (fun arg ->
-                let arg_str = show_value arg in 
-                Hashtbl.iter (fun key_list count ->
-                    List.iter (fun key ->
-                        let key_str = Binder.name key ^ (string_of_int (key.id)) in
-                        if arg_str = key_str then
-                            Hashtbl.replace mailbox_counting key_list (count - 1)
-                    ) key_list
-                ) mailbox_counting
-            ) args;
+              List.iter ( fun value ->
+                (match value with
+                  | Mailbox m -> minus_mailbox_count m
+                  | _ -> ());
+              ) (eval_args args env);
               
               execute (program,pid, steps+1,func_decl.decl_body, env', stack)
           | None ->
@@ -181,14 +170,10 @@ let rec execute (program,pid,steps,comp,env,stack) =
     
     | Send {target; message; _}, env, stack ->
       (* update mailbox counting *)
-      let arg_str = show_value target in 
-      Hashtbl.iter (fun key_list count ->
-        List.iter (fun key ->
-            let key_str = Binder.name key ^ (string_of_int (key.id)) in
-            if arg_str = key_str then
-                Hashtbl.replace mailbox_counting key_list (count - 1)
-        ) key_list
-      ) mailbox_counting;
+      (match target with
+        | Mailbox m -> minus_mailbox_count m
+        | _ -> ()
+        );
 
       (MessageToSend (target, message), (program, pid, steps+1, Return (Constant Unit), env, stack))
 
@@ -264,24 +249,21 @@ let rec process_scheduling processes max_steps =
                   List.exists (fun (v, value) ->
                     match value with
                     | Mailbox m when m = mailbox ->
-                        Printf.printf "\n这\n%s" (show_comp comp');
-                        Printf.printf "\nChecking mailbox %s\n" (RuntimeName.name m^(string_of_int(RuntimeName.id m)));
-                        
-                        let key_exists, key_with_v = 
-                          Hashtbl.fold (fun key _ (exists, key_with_v) ->
-                              if List.mem v key then
-                                  (true, key)
+                        let mailbox_exists = 
+                          Hashtbl.fold (fun mailbox _ is_exists ->
+                              if m = mailbox then
+                                  true
                               else
-                                  (exists, key_with_v)
-                          ) mailbox_counting (false, [])
+                                  is_exists
+                          ) mailbox_counting false
                         in
                         
-                        if not key_exists then
-                            Hashtbl.add mailbox_counting [v] 0;
+                        if not mailbox_exists then
+                            Hashtbl.add mailbox_counting mailbox 0;
 
                         let should_process =
-                            if not key_exists || (key_exists && ((Hashtbl.find mailbox_counting key_with_v) = 0)) then
-                                let count = check_and_update_mailboxes (prog, comp'', stack'') v [] in
+                            if not mailbox_exists || (mailbox_exists && ((Hashtbl.find mailbox_counting mailbox) = 0)) then
+                                let count = check_and_update_mailboxes (prog, comp'', stack'') v mailbox [] in
                                 count <> 0 
                             else
                                 true
