@@ -7,9 +7,9 @@ open Steps_printer
 
 let rec check_and_update_mailboxes (program,comp,stack) mailbox_reference mailbox app_list =
     (* Printf.printf "%s" (print_config11 (comp,stack));
-    Hashtbl.iter (fun key_list value ->
-        let key_str = List.map (fun key -> Binder.name key ^ (string_of_int (Binder.id key))) key_list |> String.concat ", " in
-        Printf.printf "  Key: [%s], Value: %d\n" key_str value) mailbox_counting;
+    Hashtbl.iter (fun key value ->
+        Printf.printf "  Key: %s%d, Value: %d\n" (RuntimeName.name key) (key.id) value)
+        mailbox_counting;
     Printf.printf "邮箱%s%d" (Binder.name mailbox_reference)(mailbox_reference.id); *)
 
   
@@ -56,7 +56,6 @@ let rec check_and_update_mailboxes (program,comp,stack) mailbox_reference mailbo
                   | indexed_args ->
                       (match List.find_opt (fun (_, arg) -> check_var arg mailbox_reference) indexed_args with
                       | Some (index, _) -> 
-                            Printf.printf "+2\u{1F535}";
                             let (binder, _) = List.nth func_decl.decl_parameters index in
                             add_mailbox_count mailbox 1;
                             binder
@@ -129,13 +128,22 @@ let rec mailbox_counting_update mailbox all_processes =
             false
     in
 
-    let should_process2 = List.exists (fun (prog, _, _, comp'', env'', stack'') ->
+    let should_process2 = List.exists (fun (prog, _, _, comp'', env'', stack) ->
         List.exists (fun (v, value) ->
             match value with
             | Mailbox m when m = mailbox ->
-            if not mailbox_exists || (mailbox_exists && ((Hashtbl.find mailbox_counting mailbox) = 0)) then
-                let count = check_and_update_mailboxes (prog, comp'', stack'') v mailbox [] in
-                count <> 0 
+                if not mailbox_exists || (mailbox_exists && ((Hashtbl.find mailbox_counting mailbox) = 0)) then begin
+                    let stack' = List.map (fun (Frame (binder, environment, comp)) ->
+                        let new_binder = 
+                        match List.find_opt (fun (_, value') -> value = value') environment with
+                        | Some (binder_in_env, _) -> binder_in_env
+                        | None -> binder 
+                        in
+                        Frame (new_binder, environment, comp)
+                        ) stack
+                    in
+                    let count = check_and_update_mailboxes (prog, comp'', stack') v mailbox [] in
+                    count <> 0  end
             else
                 true
             | _ -> false
