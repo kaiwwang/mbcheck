@@ -12,7 +12,7 @@ type execution_status =
   | Finished
   | Unfinished
   | Spawned of process 
-  | MessageToSend of value * message
+  | MessageToSend of value * message * environment
   | Blocked of bool * RuntimeName.t
   | FreeMailbox of RuntimeName.t
 

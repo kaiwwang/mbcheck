@@ -10,7 +10,7 @@ let rec execute (program,pid,steps,comp,env,stack) =
 
   Buffer.add_string steps_buffer (Printf.sprintf "\nMailbox_counting:\n");
   Hashtbl.iter (fun key value ->
-    Buffer.add_string steps_buffer (Printf.sprintf "  Key: %s%d, Value: %d\n" (RuntimeName.name key) (key.id) value)
+    Buffer.add_string steps_buffer (Printf.sprintf "  Mailbox: %s%d, Value: %d\n" (RuntimeName.name key) (key.id) value)
   ) mailbox_counting;
 
   Buffer.add_string steps_buffer (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes));
@@ -41,9 +41,12 @@ let rec execute (program,pid,steps,comp,env,stack) =
       
     | Seq (comp1, comp2), env, stack ->
       let (status, (_, _, steps', comp1_rest, env', stack')) = execute (program, pid, steps + 1, comp1, env, stack) in
-      let use_env = match comp1 with
-        | App _ -> env 
-        | _ -> env'  
+      let use_env =
+        match comp2 with
+        | Let {binder = _; term = _; cont = App _} -> env 
+        | _ -> (match comp1 with
+                | App _ -> env
+                | _ -> env')
       in
       (match comp1_rest with
         | Return _ ->
@@ -91,12 +94,15 @@ let rec execute (program,pid,steps,comp,env,stack) =
                       execute (program,pid, steps+1, Return (Constant (Int random_int)), env, stack)
                   | _ -> failwith_and_print_buffer "Expected integer argument for rand primitive")
             | "sleep" ->
-              let value_to_convert =List.hd (eval_args args env) in
-                (match value_to_convert with
-                  | Constant (Int i) ->
-                      let _ = Unix.sleep i in
-                      execute (program,pid, steps+1, Return (Constant (Unit)), env, stack)
-                  | _ -> failwith_and_print_buffer "Expected integer argument for sleep primitive")
+              let value_to_convert = List.hd (eval_args args env) in
+              let sleep_duration_ms = (match value_to_convert with
+                  | Constant (Int i) -> i 
+                  | _ -> failwith_and_print_buffer "Expected integer argument for sleep primitive in milliseconds")
+              in
+              let sleep_duration_s = float_of_int sleep_duration_ms /. 1000.0 in 
+              let _ = Unix.sleepf sleep_duration_s in
+              execute (program,pid, steps+1, Return (Constant (Unit)), env, stack)
+                
             | "concat" ->
               let list = eval_args args env in
               let value1 = List.hd list in
@@ -175,7 +181,7 @@ let rec execute (program,pid,steps,comp,env,stack) =
         | _ -> ()
         );
 
-      (MessageToSend (target, message), (program, pid, steps+1, Return (Constant Unit), env, stack))
+      (MessageToSend (target, message, env), (program, pid, steps+1, Return (Constant Unit), env, stack))
 
     | Guard {target; pattern; guards; _}, env, stack ->
       (match pattern with  
@@ -236,9 +242,9 @@ let rec process_scheduling processes max_steps =
         | Spawned new_process -> 
             Buffer.add_string steps_buffer (Printf.sprintf "\n******** Process %d generates a new Process \u{1F7E2} ********\n" pid);
             process_scheduling (new_process :: [updated_process] @ rest) max_steps
-        | MessageToSend (target, ((tag, _) as message)) ->
+        | MessageToSend (target, ((tag, _) as message),env'') ->
             let _,messages = message in
-            let (substituted_target, substituted_values) = substitute_in_message env' target messages in
+            let (substituted_target, substituted_values) = substitute_in_message env'' target messages in
             let unblocked_process = add_message_to_mailbox substituted_target (tag,substituted_values) pid in 
                   process_scheduling ([updated_process] @ rest @ unblocked_process) max_steps
         | Blocked (need_free_check,mailbox)->

@@ -47,7 +47,7 @@ let add_message_to_mailbox target_name message current_pid =
             msg_list
           | None -> failwith_and_print_buffer "Mailbox not found"
       in
-      Hashtbl.replace mailbox_map m (message :: msg_list);
+      Hashtbl.replace mailbox_map m (msg_list @ [message]);
       let updated_process = 
         match Hashtbl.find_opt blocked_processes m with
           | Some process -> 
@@ -172,7 +172,7 @@ let rec lookup env x =
   match env with
   | [] -> failwith_and_print_buffer "Variable not found"
   | (y, v) :: env' ->
-      if Var.id x = Var.id (Var.of_binder y) then v
+      if Var.id x = Var.id (Var.of_binder y) then v 
       else lookup env' x
 
 let rec eval_of_var env v = 
