@@ -97,6 +97,7 @@ let rec execute (program,pid,steps,comp,env,stack) =
               let value_to_convert = List.hd (eval_args args env) in
               let sleep_duration_ms = (match value_to_convert with
                   | Constant (Int i) -> i 
+                  | Variable (var_name, _) -> var_name.id
                   | _ -> failwith_and_print_buffer "Expected integer argument for sleep primitive in milliseconds")
               in
               let sleep_duration_s = float_of_int sleep_duration_ms /. 1000.0 in 
@@ -285,7 +286,7 @@ let rec process_scheduling processes max_steps =
 
 
             
-let generate program =
+let main_prog program =
   (* Buffer.add_string steps_buffer (Printf.sprintf "\n=== Reduction steps: ===\n\nProgram: %s\n" (show_program program)); *)
   let initial_process =
     match program.prog_body with
