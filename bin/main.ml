@@ -33,11 +33,18 @@ let process filename is_verbose is_debug is_ir mode benchmark_count () =
         let temp = Frontend.Parse.parse_file filename ()
             |> Frontend.Pipeline.pipeline in
         let (_, _, ir_program, _, _, _) = temp in
-        let _ = Generator.generate ir_program in
+
+        let _ = Interpreter.main_prog ir_program in
+        
         if is_ir then 
             print_ir temp
         else 
             print_result temp;
+        if is_debug then begin
+            Eval.Steps_printer.steps_buffer_print ();
+            Eval.Steps_printer.process_buffer_print ()
+            end;
+        Eval.Steps_printer.result_buffer_print ();
     with
         | e ->
             Errors.format_error e;
