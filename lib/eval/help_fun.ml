@@ -1,7 +1,7 @@
 open Common.Ir
 open Eval_types
 open Steps_printer
-
+open Common
 let step_limit = 30
 
 let global_pid_counter = ref 1
@@ -14,6 +14,8 @@ let generate_new_pid () =
 
 let mailbox_map : (RuntimeName.t,message list) Hashtbl.t = Hashtbl.create 100
 let blocked_processes : (RuntimeName.t,process) Hashtbl.t = Hashtbl.create 100
+let mailbox_counting : (RuntimeName.t, int) Hashtbl.t = Hashtbl.create 100
+
 
 
 let add_process_to_blocked_list mailbox_name process =
@@ -41,11 +43,11 @@ let add_message_to_mailbox target_name message current_pid =
       let msg_list = 
         match Hashtbl.find_opt mailbox_map m with
           | Some msg_list -> 
-            Buffer.add_string steps_buffer (Printf.sprintf "\n -> -> Process %d send a message to Mailbox: %s-> ->\n" current_pid (m.name^(string_of_int m.id)));
+            Buffer.add_string steps_buffer (Printf.sprintf "\n -> -> Process %d send a message to Mailbox: %s \u{1F4E8} -> ->\n" current_pid (m.name^(string_of_int m.id)));
             msg_list
           | None -> failwith_and_print_buffer "Mailbox not found"
       in
-      Hashtbl.replace mailbox_map m (message :: msg_list);
+      Hashtbl.replace mailbox_map m (msg_list @ [message]);
       let updated_process = 
         match Hashtbl.find_opt blocked_processes m with
           | Some process -> 
@@ -85,6 +87,28 @@ let bind_env msg payload_binders env target mailbox_binder =
         | None ->
           failwith_and_print_buffer "Target variable not found in environment")
       | _ -> failwith_and_print_buffer "Expected a variable for target")
+  
+let add_mailbox_count mailbox num =
+  if Hashtbl.mem mailbox_counting mailbox then
+      let current_count = Hashtbl.find mailbox_counting mailbox in
+      Hashtbl.replace mailbox_counting mailbox (current_count + num)
+
+let minus_mailbox_count mailbox =
+  if Hashtbl.mem mailbox_counting mailbox then
+      let current_count = Hashtbl.find mailbox_counting mailbox in
+      Hashtbl.replace mailbox_counting mailbox (current_count - 1)
+
+let rec contains_one = function
+    | Type.Pattern.One -> true
+    | PatVar _ | Zero | Message _ -> false
+    | Plus (p1, p2) | Concat (p1, p2) -> contains_one p1 || contains_one p2
+    | Many p -> contains_one p
+
+
+let find_free_guard guards = 
+  (match List.find (function Free _ -> true | _ -> false) guards with
+            |  (Free comp) -> comp
+            | _ -> failwith_and_print_buffer "No Free guard matched")
 
 let free_mailbox mailbox_binder env pid_to_check =
   match mailbox_binder with
@@ -100,7 +124,7 @@ let free_mailbox mailbox_binder env pid_to_check =
         in
         match matched_mailbox_name with
           | Some m -> 
-              Buffer.add_string steps_buffer (Printf.sprintf "\n -> -> Process %d freed Mailbox:(%s)-> ->\n" pid_to_check (m.name^(string_of_int m.id)));
+              Buffer.add_string steps_buffer (Printf.sprintf "\n -> -> Process %d freed Mailbox:(%s) \u{1F535}-> ->\n" pid_to_check (m.name^(string_of_int m.id)));
               Hashtbl.remove mailbox_map m;
               updated_env,m
           | None -> failwith_and_print_buffer "Mailbox not found")
@@ -148,7 +172,7 @@ let rec lookup env x =
   match env with
   | [] -> failwith_and_print_buffer "Variable not found"
   | (y, v) :: env' ->
-      if Var.id x = Var.id (Var.of_binder y) then v
+      if Var.id x = Var.id (Var.of_binder y) then v 
       else lookup env' x
 
 let rec eval_of_var env v = 

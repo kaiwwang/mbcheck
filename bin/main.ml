@@ -24,24 +24,26 @@ let print_ir (prog, _prety, ir, _ty, _env, _constrs) =
         "=== Intermediate Representation: ===\n%a\n\n"
         (Ir.pp_program) ir
 
-let process filename is_verbose is_debug is_ir is_reduct_steps mode benchmark_count () =
+let process filename is_verbose is_debug is_ir mode benchmark_count () =
     Settings.(set verbose is_verbose);
     Settings.(set debug is_debug);
-    Settings.(set reduc_steps is_reduct_steps);
     Settings.(set receive_typing_strategy mode);
     Settings.(set benchmark benchmark_count);
     try
         let temp = Frontend.Parse.parse_file filename ()
             |> Frontend.Pipeline.pipeline in
         let (_, _, ir_program, _, _, _) = temp in
-        let _ = Generator.generate ir_program in
+
+        let _ = Interpreter.main_prog ir_program in
+        
         if is_ir then 
             print_ir temp
         else 
             print_result temp;
-        if is_reduct_steps then 
+        if is_debug then begin
             Eval.Steps_printer.steps_buffer_print ();
-        Eval.Steps_printer.process_buffer_print ();
+            Eval.Steps_printer.process_buffer_print ()
+            end;
         Eval.Steps_printer.result_buffer_print ();
     with
         | e ->
@@ -56,7 +58,6 @@ let () =
     $ Arg.(value & flag & info ["v"; "verbose"] ~doc:"verbose typechecking information")
     $ Arg.(value & flag & info ["d"; "debug"] ~doc:"print debug information")
     $ Arg.(value & flag & info ["ir"] ~doc:"print the parsed program and its IR translation")
-    $ Arg.(value & flag & info ["s"] ~doc:"print the steps of the reduction")
     $ Arg.(value & opt (enum Settings.ReceiveTypingStrategy.enum) Settings.ReceiveTypingStrategy.Interface & info ["mode"]
       ~docv:"MODE" ~doc:"typechecking mode for receive blocks (allowed: strict, interface, none)")
     $ Arg.(value & opt int (-1) & info ["b"; "benchmark"]

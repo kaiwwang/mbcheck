@@ -44,7 +44,7 @@ let print_mailbox_map mailbox_map =
   let sorted_mailboxes = List.sort (fun (m1, _) (m2, _) -> compare (RuntimeName.id m1) (RuntimeName.id m2)) mailboxes in
   List.iter (fun (m, messages) ->
     let messages_str = List.fold_left (fun acc msg -> acc ^ show_message msg ^ "; ") "" messages in
-    Buffer.add_string b (Printf.sprintf "\nMailbox: %s, Messages: [%s]\n" (RuntimeName.name m ^"_"^string_of_int m.id) messages_str)
+    Buffer.add_string b (Printf.sprintf "\nMailbox: %s, Messages: [%s]\n" (RuntimeName.name m ^string_of_int m.id) messages_str)
   ) sorted_mailboxes;
   Buffer.contents b
 
@@ -54,7 +54,7 @@ let print_blocked_processes blocked_processes =
   let processes_list = Hashtbl.fold (fun m process acc -> (m, process) :: acc) blocked_processes [] in
   let sorted_processes = List.sort (fun (_, (_, pid1, _, _, _, _)) (_, (_, pid2, _, _, _, _)) -> compare pid1 pid2) processes_list in
   List.iter (fun (m, (_, pid, _, _, _, _)) ->
-    Buffer.add_string b (Printf.sprintf "\n   Mailbox: %s -> ID: %d \n" (RuntimeName.name m ^"_"^string_of_int m.id) pid)
+    Buffer.add_string b (Printf.sprintf "\n   Mailbox: %s -> ID: %d \n" (RuntimeName.name m^string_of_int m.id) pid)
   ) sorted_processes;
   Buffer.contents b
 
@@ -69,7 +69,7 @@ let show_value v =
   | Primitive (name) -> Printf.sprintf "%s" name
   | Inl v -> Printf.sprintf "Inl %s" (show_value v)
   | Inr _ -> Printf.sprintf "Inr %s" (show_value v)
-  | Variable (x, _) -> Var.name x 
+  | Variable (x, _) -> Printf.sprintf "%s%d" (Var.name x) x.id
   | Pair (v1, v2) -> Printf.sprintf "(%s, %s)" (show_value v1) (show_value v2)
   | Lam {linear; parameters; result_type; body} ->
     let _ = linear in let _ = result_type in

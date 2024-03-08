@@ -1,5 +1,5 @@
 (library (name eval)
- (public_name mbcheck.generator)
+ (public_name mbcheck.interpreter)
  (libraries common util bag z3)
  (modules :standard)
 ;(rule

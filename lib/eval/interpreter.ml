@@ -4,11 +4,16 @@ open Eval_types
 open Steps_printer
 open Common.Interface
 open Help_fun
-(* open Checker *)
+open Checker
 
 let rec execute (program,pid,steps,comp,env,stack) =
-  (* Buffer.add_string steps_buffer (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes)); *)
-  Printf.printf "%s" (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes));
+
+  Buffer.add_string steps_buffer (Printf.sprintf "\nMailbox_counting:\n");
+  Hashtbl.iter (fun key value ->
+    Buffer.add_string steps_buffer (Printf.sprintf "  Mailbox: %s%d, Value: %d\n" (RuntimeName.name key) (key.id) value)
+  ) mailbox_counting;
+
+  Buffer.add_string steps_buffer (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes));
 
   let current_steps = Hashtbl.find_opt step_counts pid |> Option.value ~default:0 in
   Hashtbl.replace step_counts pid (current_steps + 1);
@@ -35,9 +40,12 @@ let rec execute (program,pid,steps,comp,env,stack) =
       
     | Seq (comp1, comp2), env, stack ->
       let (status, (_, _, steps', comp1_rest, env', stack')) = execute (program, pid, steps + 1, comp1, env, stack) in
-      let use_env = match comp1 with
-        | App _ -> env 
-        | _ -> env'  
+      let use_env =
+        match comp2 with
+        | Let {binder = _; term = _; cont = App _} -> env 
+        | _ -> (match comp1 with
+                | App _ -> env
+                | _ -> env')
       in
       (match comp1_rest with
         | Return _ ->
@@ -51,6 +59,11 @@ let rec execute (program,pid,steps,comp,env,stack) =
 
     | Return v, env, Frame (x, env', cont) :: stack ->
       let result = eval_of_var env v in
+      (* update mailbox counting *)
+      (match result with
+        | Mailbox m -> minus_mailbox_count m
+        | _ -> ()
+        );
       execute (program,pid, steps+1,cont, (x, result) :: env', stack)
 
     | App {func; args}, env, stack -> 
@@ -80,12 +93,16 @@ let rec execute (program,pid,steps,comp,env,stack) =
                       execute (program,pid, steps+1, Return (Constant (Int random_int)), env, stack)
                   | _ -> failwith_and_print_buffer "Expected integer argument for rand primitive")
             | "sleep" ->
-              let value_to_convert =List.hd (eval_args args env) in
-                (match value_to_convert with
-                  | Constant (Int i) ->
-                      let _ = Unix.sleep i in
-                      execute (program,pid, steps+1, Return (Constant (Unit)), env, stack)
-                  | _ -> failwith_and_print_buffer "Expected integer argument for sleep primitive")
+              let value_to_convert = List.hd (eval_args args env) in
+              let sleep_duration_ms = (match value_to_convert with
+                  | Constant (Int i) -> i 
+                  | Variable (var_name, _) -> var_name.id
+                  | _ -> failwith_and_print_buffer "Expected integer argument for sleep primitive in milliseconds")
+              in
+              let sleep_duration_s = float_of_int sleep_duration_ms /. 1000.0 in 
+              let _ = Unix.sleepf sleep_duration_s in
+              execute (program,pid, steps+1, Return (Constant (Unit)), env, stack)
+                
             | "concat" ->
               let list = eval_args args env in
               let value1 = List.hd list in
@@ -106,6 +123,14 @@ let rec execute (program,pid,steps,comp,env,stack) =
           (match find_decl func_name program.prog_decls with
           | Some func_decl ->
               let env' = bind_args_paras (List.map (fun arg -> eval_of_var env arg) args) (func_decl.decl_parameters) in
+
+              (* update mailbox counting *)
+              List.iter ( fun value ->
+                (match value with
+                  | Mailbox m -> minus_mailbox_count m
+                  | _ -> ());
+              ) (eval_args args env);
+              
               execute (program,pid, steps+1,func_decl.decl_body, env', stack)
           | None ->
             (match List.find_opt (fun v -> match v with
@@ -139,7 +164,7 @@ let rec execute (program,pid,steps,comp,env,stack) =
       (match List.find_opt (fun iface -> name iface = interface_name) program.prog_interfaces with
       | Some _ -> 
           let mailbox_name = RuntimeName.make ~name:v.name () in 
-          Hashtbl.add mailbox_map mailbox_name [];
+          Hashtbl.add mailbox_map mailbox_name []; 
           let env' =  (v,Mailbox mailbox_name) :: env in
           execute (program,pid, steps+1, cont, env', stack)
       | None -> failwith_and_print_buffer ("Interface " ^ interface_name ^ " not found"))
@@ -150,36 +175,45 @@ let rec execute (program,pid,steps,comp,env,stack) =
         (Spawned new_process, (program, pid,steps+1, Return (Constant Unit), env, stack))
     
     | Send {target; message; _}, env, stack ->
-      (MessageToSend (target, message), (program, pid, steps+1, Return (Constant Unit), env, stack))
+      (* update mailbox counting *)
+      (match target with
+        | Mailbox m -> minus_mailbox_count m
+        | _ -> ()
+        );
+
+      (MessageToSend (target, message, env), (program, pid, steps+1, Return (Constant Unit), env, stack))
 
     | Guard {target; pattern; guards; _}, env, stack ->
       (match pattern with  
         | Type.Pattern.One ->
-            (match List.find (function Free _ -> true | _ -> false) guards with
-            |  (Free comp') ->
-                let new_env, mailbox_to_remove = free_mailbox target env pid in
-                  (FreeMailbox mailbox_to_remove ,(program, pid, steps+1, comp', new_env, stack))
-            | _ -> failwith_and_print_buffer "No Free guard matched")
+          let comp' = find_free_guard guards in
+          let new_env, mailbox_to_remove = free_mailbox target env pid in
+          (FreeMailbox mailbox_to_remove ,(program, pid, steps+1, comp', new_env, stack))
         | Type.Pattern.Zero ->
           failwith_and_print_buffer "Zero pattern not supported"
         | _ ->
+          let need_free_check = (match List.find_opt (function Free _ -> true | _ -> false) guards with
+                | Some (Free _) -> true
+                | _ -> false) 
+            || contains_one pattern
+          in
           let m = eval_of_var env target in
             (match m with
               | Mailbox mailbox_name ->
                   (match Hashtbl.find_opt mailbox_map mailbox_name with
                     | Some msg_list -> 
-                        (let rec match_guards = function
-                          | [] -> 
-                              (Blocked mailbox_name, (program,pid, steps, comp, env, stack))
+                        (let rec match_guards need_free_check = function
                           | Receive {tag; payload_binders; mailbox_binder; cont} :: rest ->
                               if List.exists (fun (msg_tag, _) -> msg_tag = tag) msg_list then
                                 let message_to_process = extract_message tag mailbox_name msg_list in
                                 let new_env = bind_env message_to_process payload_binders env target mailbox_binder in
                                 execute (program, pid, steps+1, cont, new_env, stack)
                               else
-                                match_guards rest
-                          | _ :: rest ->  match_guards rest in
-                        match_guards guards )
+                                match_guards need_free_check rest
+                          | [] -> 
+                            (Blocked (need_free_check, mailbox_name), (program,pid, steps, comp, env, stack))
+                          | _ :: rest ->  match_guards need_free_check rest in
+                        match_guards need_free_check guards )
                     | None -> failwith_and_print_buffer "No mailbox matched"
                   )
               | _ -> failwith_and_print_buffer "No mailbox matched"))
@@ -188,34 +222,17 @@ let rec execute (program,pid,steps,comp,env,stack) =
 
 let rec process_scheduling processes max_steps =
   match processes with
-  | [] -> 
-     (Hashtbl.iter (fun m (program,pid,steps,comp,env,stack) ->
-        (match comp with
-                | Guard {target; pattern = _; guards; _} ->
-                  (match List.find_opt (function Free _ -> true | _ -> false) guards with
-                    | Some (Free comp') ->
-                      let new_env, _ = free_mailbox target env pid in
-                      let unblock_process = (program, pid, steps+1, comp', new_env, stack) in
-                      Hashtbl.remove blocked_processes m;
-                      process_scheduling (unblock_process::processes) max_steps
-                    | _ ->
-                      ()
-                      )
-                | _ -> ());
-      ) blocked_processes;
-      ()
-  )
-
+  | [] -> ()
   | (prog, pid, steps, comp, env, stack) :: rest ->
       let total_steps = match Hashtbl.find_opt step_counts pid with
           | Some count -> count
           | None -> steps
         in
         Hashtbl.replace step_counts pid total_steps;
-      if steps >= max_steps then begin
+      if steps >= max_steps then 
         process_scheduling (rest @ [(prog, pid, 0, comp, env, stack)]) max_steps
-      end else
-        let (execution_status, ((_, _, _, _, env',_) as updated_process)) = execute (prog, pid, 0, comp, env, stack) in
+      else
+        let (execution_status, ((prog', pid', step', comp', env',stack') as updated_process)) = execute (prog, pid, 0, comp, env, stack) in
         match execution_status with
         | Finished -> 
             Buffer.add_string steps_buffer (Printf.sprintf "\n******** Process %d Finished \u{2705} ********\n" pid);
@@ -223,25 +240,53 @@ let rec process_scheduling processes max_steps =
         | Unfinished -> 
             process_scheduling (rest @ [updated_process]) max_steps
         | Spawned new_process -> 
-            Buffer.add_string steps_buffer (Printf.sprintf "\n******** Process %d generates a new Process ********\n" pid);
+            Buffer.add_string steps_buffer (Printf.sprintf "\n******** Process %d generates a new Process \u{1F7E2} ********\n" pid);
             process_scheduling (new_process :: [updated_process] @ rest) max_steps
-        | MessageToSend (target, ((tag, _) as message)) ->
+        | MessageToSend (target, ((tag, _) as message),env'') ->
             let _,messages = message in
-            let (substituted_target, substituted_values) = substitute_in_message env' target messages in
+            let (substituted_target, substituted_values) = substitute_in_message env'' target messages in
             let unblocked_process = add_message_to_mailbox substituted_target (tag,substituted_values) pid in 
                   process_scheduling ([updated_process] @ rest @ unblocked_process) max_steps
-        | Blocked mailbox->
-            Buffer.add_string steps_buffer (Printf.sprintf "\n******** Process %d Blocked \u{1F6AB} ********\n" pid);
-            add_process_to_blocked_list mailbox updated_process;
-            process_scheduling rest max_steps
+        | Blocked (need_free_check,mailbox)->
+            let should_block = 
+              if need_free_check then
+                let all_processes = rest @
+                  (Hashtbl.fold (fun _ process acc -> process :: acc) blocked_processes []) in
+                  if mailbox_counting_update mailbox all_processes then 
+                    true
+                  else
+                    begin
+                    (match comp' with
+                      | Guard {target; pattern = _; guards; _} ->
+                        (match List.find_opt (function Free _ -> true | _ -> false) guards with
+                          | Some (Free comp'') ->
+                            let new_env, _ = free_mailbox target env' pid in
+                            let unblock_process = (prog', pid', step'+1, comp'', new_env, stack') in
+                            process_scheduling (unblock_process::rest) max_steps
+                          | _ -> failwith_and_print_buffer "No free guard found")
+                      | _ -> ());
+                      false
+                      end
+              else
+                true
+            in
+            if should_block then
+              begin
+                Buffer.add_string steps_buffer (Printf.sprintf "\n******** Process %d Blocked \u{1F6AB} ********\n" pid);
+                add_process_to_blocked_list mailbox updated_process;
+                process_scheduling rest max_steps
+              end
+            else
+              ()
+
         | FreeMailbox mailbox -> 
             let new_processes = update_processes_after_free (updated_process::rest) mailbox in
             process_scheduling new_processes max_steps
 
 
             
-let generate program =
-  (* Buffer.add_string steps_buffer (Printf.sprintf "\n=== Reduction steps: ===\n\nProgram: %s\n" (show_program program)); *)
+let main_prog program =
+  Buffer.add_string steps_buffer (Printf.sprintf "\n=== Reduction steps: ===\n\nProgram: %s\n" (show_program program));
   let initial_process =
     match program.prog_body with
     | Some (App { func = Variable (func_var, _); args }) ->
