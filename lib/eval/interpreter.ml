@@ -14,7 +14,6 @@ let rec execute (program,pid,steps,comp,env,stack) =
   ) mailbox_counting;
 
   Buffer.add_string steps_buffer (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes));
-  (* Printf.printf "%s" (print_config (comp,env,stack,steps,pid,mailbox_map,blocked_processes)); *)
 
   let current_steps = Hashtbl.find_opt step_counts pid |> Option.value ~default:0 in
   Hashtbl.replace step_counts pid (current_steps + 1);
@@ -230,9 +229,9 @@ let rec process_scheduling processes max_steps =
           | None -> steps
         in
         Hashtbl.replace step_counts pid total_steps;
-      if steps >= max_steps then begin
+      if steps >= max_steps then 
         process_scheduling (rest @ [(prog, pid, 0, comp, env, stack)]) max_steps
-      end else
+      else
         let (execution_status, ((prog', pid', step', comp', env',stack') as updated_process)) = execute (prog, pid, 0, comp, env, stack) in
         match execution_status with
         | Finished -> 
@@ -287,7 +286,7 @@ let rec process_scheduling processes max_steps =
 
             
 let main_prog program =
-  (* Buffer.add_string steps_buffer (Printf.sprintf "\n=== Reduction steps: ===\n\nProgram: %s\n" (show_program program)); *)
+  Buffer.add_string steps_buffer (Printf.sprintf "\n=== Reduction steps: ===\n\nProgram: %s\n" (show_program program));
   let initial_process =
     match program.prog_body with
     | Some (App { func = Variable (func_var, _); args }) ->

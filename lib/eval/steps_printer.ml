@@ -112,11 +112,3 @@ let print_config (comp, env, stack, steps, pid, mailbox_map, blocked_processes) 
   let env_str = Printf.sprintf "Env: %s\n\n" (show_env env) in
   let frame_stack_str = Printf.sprintf "Frame Stack: %s\n" (show_frame_stack stack) in
   step_str ^ mailbox_map^ blocked_processes ^ steps_str ^ comp_str ^ env_str ^ frame_stack_str
-
-
-let print_config11 (comp,stack) =
-  counter := !counter + 1;
-  let step_str = Printf.sprintf "\n------------------- Total step %d --------------------\n" !counter in
-  let comp_str = Printf.sprintf "Comp: %s\n\n" (show_comp comp) in
-  let frame_stack_str = Printf.sprintf "Frame Stack: %s\n" (show_frame_stack stack) in
-  step_str ^ comp_str ^ frame_stack_str

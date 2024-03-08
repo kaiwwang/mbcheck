@@ -53,7 +53,8 @@ def main(): Unit {
   let actorMb3 = new [ActorMb] in
   spawn { actor(actorMb3) };
 
-  flood(100, actorMb1)
+  flood(10, actorMb1);
+  flood(10, actorMb1)
 }
 
 main()

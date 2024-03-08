@@ -3,15 +3,7 @@ open Help_fun
 open Eval_types
 open Steps_printer
 
-(* app_list avoid for recursion *)
-
 let rec check_and_update_mailboxes (program,comp,stack) mailbox_reference mailbox app_list =
-    (* Printf.printf "%s" (print_config11 (comp,stack));
-    Hashtbl.iter (fun key value ->
-        Printf.printf "  Key: %s%d, Value: %d\n" (RuntimeName.name key) (key.id) value)
-        mailbox_counting;
-    Printf.printf "邮箱%s%d" (Binder.name mailbox_reference)(mailbox_reference.id); *)
-
   
   match comp,stack with
     | Return _ ,[] -> 
