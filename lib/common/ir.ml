@@ -305,10 +305,10 @@ let substitute_solution sol =
         object
             inherit [_] map
 
-            method! visit_PatVar _env x =
+            method! visit_PatVar _env x pos =
                 match StringMap.find_opt x sol with
                     | Some ty -> ty
-                    | None -> Type.Pattern.PatVar x
+                    | None -> Type.Pattern.PatVar (x,pos)
         end
     in
     visitor#visit_program ()

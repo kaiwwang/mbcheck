@@ -1,5 +1,6 @@
 open Common_types
 open Util.Utility
+open Source_code
 
 module Capability = struct
     type t = In | Out
@@ -78,12 +79,12 @@ end
 
 module Pattern = struct
     type t =
-        | PatVar of (PatternVar.t [@name "pattern_var"])
-        | One
-        | Zero
+        | PatVar of (PatternVar.t [@name "pattern_var"]) * (Position.t[@name "position"][@opaque])
+        | One of (Position.t[@name "position"][@opaque])
+        | Zero of (Position.t[@name "position"][@opaque])
         (* Note: We do not need the payloads here, since they will be
            declared in the interface. *)
-        | Message of string (* tag name *)
+        | Message of string * (Position.t[@name "position"][@opaque])(* tag name *)
         | Plus of t * t
         | Concat of t * t
         | Many of t
@@ -100,7 +101,7 @@ module Pattern = struct
     ]
 
     (** Creates a pattern consisting of a fresh pattern variable. *)
-    let fresh () = PatVar (PatternVar.fresh ())
+    let fresh pos = PatVar ((PatternVar.fresh ()),pos)
 
     (* Common visitor for derivatives *)
     class virtual ['self] deriv_visitor =
@@ -115,7 +116,7 @@ module Pattern = struct
             method! visit_Many env p =
                 Concat (self#visit_pattern env p, Many p)
 
-            method! visit_One _env = Zero
+            method! visit_One _env pos = Zero pos
         end
 
     (** Calculates the pattern derivative wrt. a message tag. *)
@@ -123,7 +124,7 @@ module Pattern = struct
         let visitor =
             object
                 inherit [_] deriv_visitor
-                method! visit_Message _ m = if m = tag then One else Zero
+                method! visit_Message _ m pos = if m = tag then One pos else Zero pos
             end
         in
         visitor#visit_pattern ()
@@ -133,8 +134,8 @@ module Pattern = struct
             object
                 inherit [_] deriv_visitor
                 (* Variable derivative of a message is also Zero. *)
-                method! visit_Message _ _ = Zero
-                method! visit_PatVar _ v2 = if var = v2 then One else Zero
+                method! visit_Message _ _ pos = Zero pos
+                method! visit_PatVar _ v2 pos = if var = v2 then One pos else Zero pos
             end
         in
         visitor#visit_pattern ()
@@ -143,11 +144,59 @@ module Pattern = struct
         let visitor =
             object
                 inherit [_] map
-                method! visit_PatVar _ pv =
-                    if pv = var then to_subst else PatVar pv
+                method! visit_PatVar _ pv pos =
+                    if pv = var then to_subst else PatVar (pv,pos)
             end
         in
         visitor#visit_pattern () pat
+
+    (* The following three functions may be optimized *)
+    (* Returns the positions of all the single pattern in a pattern. *)
+    let rec get_poses p =
+        match p with
+        | PatVar (_, pos) -> [pos]
+        | One pos -> [pos]
+        | Zero pos -> [pos]
+        | Message (_, pos) -> [pos]
+        | Plus (p1, p2) -> 
+            (get_poses p1) @ (get_poses p2)
+        | Concat (p1, p2) -> 
+            (get_poses p1) @ (get_poses p2)
+        | Many p -> 
+            (get_poses p)
+    
+    (* find the position of a message with a given tag in a pattern, using in gen_constaint.ml *)
+    let rec find_message_pos pat tag1 =
+        match pat with
+        | PatVar _ 
+        | One _ 
+        | Zero _ -> (false, Position.dummy)
+        | Message (tag2, pos) -> 
+            if tag1 = tag2 then (true, pos)
+            else (false, Position.dummy)
+        | Plus (p1, p2)
+        | Concat (p1, p2) ->
+            (match find_message_pos p1 tag1 with
+            | (true, p) -> (true, p)
+            | (false, _) -> find_message_pos p2 tag1)
+        | Many p -> find_message_pos p tag1
+    
+    (* find the top-level position in a pattern *)
+    let rec find_pos pat =
+        match pat with
+        | PatVar (_, pos)
+        | One pos
+        | Zero pos
+        | Message (_, pos) -> pos
+        | Plus (p1, p2) -> 
+            let pos1 = find_pos p1 in
+            let pos2 = find_pos p2 in
+            Position.combined_pos pos1 pos2
+        | Concat (p1, p2) ->
+            let pos1 = find_pos p1 in
+            let pos2 = find_pos p2 in
+            Position.combined_pos pos1 pos2
+        | Many p -> find_pos p
 
     (* Given a Variable |-> Pattern map,
        substitutes all occurrences of a variable within the pattern
@@ -159,11 +208,11 @@ module Pattern = struct
 
     (** Computes the Hopkins-Kozen closed-form solution of a pattern wrt. a
         pattern variable. *)
-    let hopkins_kozen_solution var pat =
+    let hopkins_kozen_solution var pos pat =
         let inner =
             Concat (Many (subst (var_derivative var pat) pat var), pat)
         in
-        subst inner Zero var
+        subst inner (Zero pos) var
 
     let simplify =
         let visitor =
@@ -176,8 +225,8 @@ module Pattern = struct
                         (self#visit_pattern env p1, self#visit_pattern env p2) in
                     if p1 = p2 then p1 else
                     match p1, p2 with
-                        | (Zero, p)
-                        | (p, Zero) -> p
+                        | (Zero _, p)
+                        | (p, Zero _) -> p
                         | _, _ -> Plus (p1, p2)
 
                 (* One is the unit for Concat. Zero is the eliminator. *)
@@ -185,16 +234,16 @@ module Pattern = struct
                     let (p1, p2) =
                         (self#visit_pattern env p1, self#visit_pattern env p2) in
                     match p1, p2 with
-                        | (Zero, _) | (_, Zero) -> Zero
-                        | (One, p)  | (p, One) -> p
+                        | (Zero pos, _ ) | (_, Zero pos ) -> Zero pos
+                        | (One _, p)  | (p, One _) -> p
                         | _, _ -> Concat (p1, p2)
 
                 method! visit_Many env p =
                     match self#visit_pattern env p with
                         (* Note: counterintuitively (but crucially), simplify(0* ) = 1.
                            This is due to the semantic interpretation of P* being grounded at 1. *)
-                        | Zero
-                        | One -> One
+                        | Zero pos
+                        | One pos -> One pos
                         | p -> Many p
             end
         in
@@ -206,7 +255,8 @@ module Pattern = struct
                 inherit [_] reduce
                 method zero = StringSet.empty
                 method plus = StringSet.union
-                method! visit_PatVar _ = StringSet.singleton
+                (* method! visit_PatVar _ var pos = singleton_with_pos (var, pos) *)
+                method! visit_PatVar _ var _ = StringSet.singleton var
             end
         in
         o#visit_pattern ()
@@ -217,7 +267,7 @@ module Pattern = struct
                 inherit [_] reduce
                 method zero = StringSet.empty
                 method plus = StringSet.union
-                method! visit_Message _ = StringSet.singleton
+                method! visit_Message _ var _ = StringSet.singleton var
             end
         in
         o#visit_pattern ()
@@ -227,17 +277,16 @@ module Pattern = struct
 
     let is_zero p =
         match simplify p with
-            | Zero -> true
-            | _ -> false
-
+            | Zero pos -> (true,[pos])
+            | p -> (false,get_poses(p))
     let rec pp ppf : t -> unit =
       let open Format in
       let ps = pp_print_string ppf in
       function
-        | PatVar x -> PatternVar.pp ppf x
-        | One -> ps "1"
-        | Zero -> ps "0"
-        | Message tag -> ps tag
+        | PatVar (x,_) -> PatternVar.pp ppf x
+        | One _ -> ps "1"
+        | Zero _ -> ps "0"
+        | Message (tag,_) -> ps tag
         | Plus (p1, p2) ->
             fprintf ppf "(%a + %a)" pp p1 pp p2
         | Concat (p1, p2) ->
@@ -299,11 +348,11 @@ let atom = Base Base.Atom
 let function_type linear args result =
     Fun { linear; args; result }
 
-let mailbox_send_unit interface quasilinearity =
+let mailbox_send_unit interface quasilinearity pos =
     Mailbox {
         capability = Capability.Out;
         interface;
-        pattern = Some (Pattern.One);
+        pattern = Some (Pattern.One pos);
         quasilinearity
     }
 
@@ -357,7 +406,7 @@ let rec is_lin = function
     | Base _ -> false
     | Fun { linear; _ } -> linear
     (* !1 is unrestricted... *)
-    | Mailbox { capability = Out; pattern = Some One; _ } -> false
+    | Mailbox { capability = Out; pattern = Some One _; _ } -> false
     | Pair (t1, t2) -> is_lin t1 || is_lin t2
     | Sum (t1, t2) -> is_lin t1 || is_lin t2
     (* ...but otherwise a mailbox type must be used linearly. *)

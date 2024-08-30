@@ -175,8 +175,65 @@ module Position = struct
 
   let code t = t.code
 
+
+  (* Functions below are used to solve the problem of overlapping positions, 
+     but there are some issues with the implementation. Like red line problem, 
+     repeat invoke same function, etc. *)
+  (* Function to combine two positions *)
+  let combined_pos pos1 pos2 = make
+      ~start:(min pos1.start pos2.start)
+      ~finish:(max pos1.finish pos2.finish)
+      ~code:(SourceCodeManager.get_instance ())
+
+  (* Function to compare two positions by pos_lnum *)
+  let compare_by_lnum pos1 pos2 =
+    pos1.start.Lexing.pos_lnum = pos2.start.Lexing.pos_lnum &&
+    pos1.finish.Lexing.pos_lnum = pos2.finish.Lexing.pos_lnum
+
+  (* Function to check if one position is contained within another *)
+  let is_contained pos1 pos2 =
+    (pos1.start.Lexing.pos_lnum >= pos2.start.Lexing.pos_lnum &&
+    pos1.finish.Lexing.pos_lnum <= pos2.finish.Lexing.pos_lnum) ||
+    (pos1.start.Lexing.pos_lnum <= pos2.start.Lexing.pos_lnum &&
+    pos1.finish.Lexing.pos_lnum >= pos2.finish.Lexing.pos_lnum)
+  
+  (* Function to check if two positions are neighbours *)
+  let is_neighbour pos1 pos2 =
+    pos1.finish.Lexing.pos_lnum = pos2.start.Lexing.pos_lnum ||
+    pos1.start.Lexing.pos_lnum = pos2.finish.Lexing.pos_lnum ||
+    pos1.finish.Lexing.pos_lnum + 1 = pos2.start.Lexing.pos_lnum ||
+    pos1.start.Lexing.pos_lnum - 1 = pos2.finish.Lexing.pos_lnum
+
+  (* Function to compare two positions by pos_cnum *)
+  let compare_by_cnum pos1 pos2 =
+    pos1.start.Lexing.pos_cnum = pos2.start.Lexing.pos_cnum &&
+    pos1.finish.Lexing.pos_cnum = pos2.finish.Lexing.pos_cnum
+
+  (* Function to remove duplicates and combine positions in the list *)
+  let rec remove_duplicates_and_combine pos_list =
+    match pos_list with
+    | [] -> []
+    | [x] -> [x]
+    | x :: (y :: rest) ->
+      if compare_by_lnum x y then
+        if compare_by_cnum x y then
+          remove_duplicates_and_combine (x :: rest)
+        else
+          remove_duplicates_and_combine ((combined_pos x y) :: rest)
+      else if is_contained x y || is_neighbour x y then
+        remove_duplicates_and_combine ((combined_pos x y) :: rest)
+      else
+        x :: remove_duplicates_and_combine (y :: rest)
+
+  (* Main function to process the position list *)
+  let process_positions pos_list =
+    let sorted_pos_list = List.sort (fun p1 p2 -> compare p1.start.Lexing.pos_lnum p2.start.Lexing.pos_lnum) pos_list in
+    remove_duplicates_and_combine sorted_pos_list
+
+  (* let format_pos pos_list = 
+    String.concat "\n" (List.map (fun pos -> Format.asprintf "%a" pp pos) (process_positions pos_list)) *)
   let format_pos pos_list = 
-    String.concat "\n " (List.map (fun pos -> Format.asprintf "%a" pp pos) pos_list)
+    String.concat "\n" (List.map (fun pos -> Format.asprintf "%a" pp pos) pos_list)
 end
 
 module WithPos = struct
@@ -210,4 +267,15 @@ module WithPos = struct
 
   let combine_with_pos_list pos_list node_list = 
     List.map2 (fun pos node -> make ~pos node) pos_list node_list
+
+  let extract_poses e1 e2 =
+    let pos1 = pos e1 in
+    pos e2 |> Position.combined_pos pos1
 end
+
+(* Returns a set of pattern variables with their positions in order to 
+   identify the source of the pat_var *)
+module StringPosSet = Set.Make(struct
+  type t = string * Position.t
+  let compare (s1, _) (s2, _) = String.compare s1 s2
+end)

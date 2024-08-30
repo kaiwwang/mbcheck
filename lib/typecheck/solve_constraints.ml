@@ -35,6 +35,7 @@
 open Common
 open Util.Utility
 open Type
+open Source_code
 
 module PVarMap = StringMap
 
@@ -43,7 +44,7 @@ module PVarMap = StringMap
 let get_lower_bounds =
     List.filter_map (fun x ->
         match Constraint.rhs x with
-            | PatVar p -> Some (p, Constraint.lhs x)
+            | Pattern.PatVar (p, pos) -> Some (p, pos, Constraint.lhs x)
             | _ -> None)
 
 (* Recall: Upper bound is a constraint where RHS is defined *)
@@ -55,23 +56,23 @@ let get_upper_bounds =
    a pattern. Duplicates are handled by adding a pattern disjunction; unbounded
    variables are set to the largest pattern (Zero). *)
 let group_lower_bounds
-    (pat_vars : StringSet.t)
-    (lower_bounds : (PatternVar.t * Pattern.t) list)
-    : Pattern.t PVarMap.t =
+    (pat_vars : StringPosSet.t)
+    (lower_bounds : (PatternVar.t  * Position.t * Pattern.t) list)
+    : (Pattern.t * Position.t) PVarMap.t =
     let open Pattern in
 
     (* Group all patterns *)
     Settings.if_debug (fun () -> Printf.printf "Lower bounds:\n");
     let grouped =
-        List.fold_left (fun acc (pv, pat) ->
+        List.fold_left (fun acc (pv, pos, pat) ->
             Settings.if_debug (fun () ->
                 Format.(fprintf std_formatter "%s |-> %a\n" pv Pattern.pp pat)
             );
             match PVarMap.find_opt pv acc with
-                | Some pat2 ->
-                    PVarMap.add pv (Plus (pat, pat2)) acc
+                | Some (pat2,pos2) ->
+                    PVarMap.add pv ((Plus (pat, pat2)), Position.combined_pos pos pos2) acc
                 | None ->
-                    PVarMap.add pv pat acc
+                    PVarMap.add pv (pat, pos) acc
         ) PVarMap.empty lower_bounds
     in
     (* Then, compute set of variables which aren't lower bounds,
@@ -80,14 +81,15 @@ let group_lower_bounds
      *)
     let bounds_set =
         PVarMap.bindings grouped
-            |> List.map fst
-            |> StringSet.of_list in
+            |> List.map (fun (pv, (_, pos)) -> (pv, pos))
+            |> StringPosSet.of_list
+    in
     let unbounded_vars =
-        StringSet.diff pat_vars bounds_set
-            |> StringSet.elements
+        StringPosSet.diff pat_vars bounds_set
+            |> StringPosSet.elements
     in
     List.fold_left
-        (fun acc x -> PVarMap.add x Zero acc)
+        (fun acc (x, pos) -> PVarMap.add x (Zero pos, pos) acc)
         grouped unbounded_vars
 
 (* Follow the same logic as MCC.
@@ -99,17 +101,17 @@ let group_lower_bounds
 let substitute_solutions constrs =
     (* Top-to-bottom *)
     let top_to_bottom =
-        List.fold_right (fun (var, pat) (map: Pattern.t stringmap) ->
+        List.fold_right (fun (var, (pat,pos)) (map: Pattern.t stringmap) ->
             let hk_sol =
                 (* Apply current substitution map to pattern *)
                 Pattern.subst_all pat map
                 (* Compute HK solution *)
-                |> Pattern.hopkins_kozen_solution var
+                |> Pattern.hopkins_kozen_solution var pos
             in
             Settings.if_debug (fun () ->
                 Format.printf "HK Solution for %s: %a\n" var Pattern.pp hk_sol
             );
-            PVarMap.add var hk_sol map
+            PVarMap.add var (Pattern.simplify hk_sol) map
         )  (PVarMap.bindings constrs) PVarMap.empty
     in
     (*
@@ -234,9 +236,9 @@ module SemiLinearSet = struct
         let open Pattern in
         function
             | PatVar _ -> assert false (* HK resolution will have removed these. *)
-            | One -> one
-            | Zero -> empty
-            | Message tag -> singleton (LinearSet.singleton tag)
+            | One _ -> one
+            | Zero _ -> empty
+            | Message (tag, _) -> singleton (LinearSet.singleton tag)
             | Plus (p1, p2) -> union (of_pattern p1) (of_pattern p2)
             | Concat (p1, p2) -> product (of_pattern p1) (of_pattern p2)
             | Many p ->
@@ -322,7 +324,7 @@ let semilinear_to_presburger tags sls =
 
 
 let resolve_constraint resolved_lowers constr =
-    let lhs, rhs = Constraint.(lhs constr, rhs constr) in
+    let (lhs, rhs, constr_s) = Constraint.(lhs constr, rhs constr, source constr) in
     (* Pattern should be an upper bound, and therefore have no variables on its
      RHS. *)
     let () = assert (Pattern.defined rhs) in
@@ -332,14 +334,13 @@ let resolve_constraint resolved_lowers constr =
             |> Pattern.simplify
     in
     let rhs = Pattern.simplify rhs in
-    Constraint.make lhs rhs
-
+    Constraint.make lhs rhs constr_s
 (* Translates a constraint into a Presburger goal *)
 (* PRECONDITION: Requires the constraint to be fully resolved *)
 let constraint_to_goal constr =
-    let lhs, rhs = Constraint.(lhs constr, rhs constr) in
+    let lhs, rhs, constr_s = Constraint.(lhs constr, rhs constr, source constr) in
     Settings.if_debug (fun () ->
-        Format.printf "Checking constraint %a\n" Constraint.pp (Constraint.make lhs rhs)
+        Format.printf "Checking constraint %a\n" Constraint.pp (Constraint.make lhs rhs constr_s)
     );
     let tags =
         StringSet.union (Pattern.tags lhs) (Pattern.tags rhs)
@@ -363,7 +364,8 @@ let check_satisfiability resolved_lowers =
     let check_result constr goal =
         let open Format in
         let open Solver_result in
-        let (lhs, rhs) = Constraint.((lhs constr, rhs constr)) in
+        let (lhs, rhs) = Constraint.(lhs constr, rhs constr) in
+        let pos1,pos2 = Pattern.get_poses lhs, Pattern.get_poses rhs in
         let (lhs, rhs) = Pattern.((show lhs, show rhs)) in
         function
             | Satisfiable ->
@@ -373,12 +375,12 @@ let check_satisfiability resolved_lowers =
                 Settings.if_debug (fun () ->
                     printf "UNSATISFIABLE: %a\n" Presburger.pp_goal goal
                 );
-                raise (Errors.constraint_solver_error lhs rhs)
+                raise (Errors.constraint_solver_error lhs rhs pos1 pos2)
             | Unknown ->
                 Settings.if_debug (fun () ->
                     printf "DUNNO: %a\n" Presburger.pp_goal goal
                 );
-                raise (Errors.constraint_solver_error lhs rhs)
+                raise (Errors.constraint_solver_error lhs rhs pos1 pos2)
     in
 
     (* For each upper bound:
@@ -405,8 +407,9 @@ let check_satisfiability resolved_lowers =
  *)
 let check_nonzero =
     PVarMap.iter (fun var pat ->
-        if Pattern.is_zero pat then
-            raise (Errors.constraint_solver_zero_error var))
+        let (res, pos_list) = Pattern.is_zero pat in
+        if res then
+            raise (Errors.constraint_solver_zero_error var pos_list))
 
 (* Main pipeline *)
 let pipeline constrs =
@@ -424,7 +427,7 @@ let pipeline constrs =
         in
         Settings.if_debug (fun () ->
             Printf.printf "Grouped lower bounds:\n";
-            PVarMap.iter (fun k p ->
+            PVarMap.iter (fun k (p, _) ->
                 Format.(fprintf std_formatter "%s: %a\n" k Pattern.pp p)
             ) lbs
         );

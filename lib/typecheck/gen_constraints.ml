@@ -220,7 +220,7 @@ and synthesise_comp :
             let open Type in
             Mailbox {
                 capability = Capability.In;
-                interface; pattern = Some One;
+                interface; pattern = Some (One pos);
                 (* 'New' always produces a returnable MB type *)
                 quasilinearity = Quasilinearity.Returnable;
             },
@@ -231,7 +231,7 @@ and synthesise_comp :
                 let open Type in
                 Mailbox {
                     capability = Capability.In;
-                    interface; pattern = Some One;
+                    interface; pattern = Some (One pos);
                     (* 'New' always produces a returnable MB type *)
                     quasilinearity = Quasilinearity.Returnable;
                 }
@@ -289,7 +289,7 @@ and synthesise_comp :
                 Mailbox {
                     capability = Out;
                     interface = iname;
-                    pattern = Some (Message tag);
+                    pattern = Some (Message (tag,pos));
                     (* 'Send' gives the MB type the least specific
                        quasilinearity (Usable). It can be coerced to Returnable
                        via subtyping later if necessary, but we don't *need*
@@ -529,7 +529,7 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                not used is if it's a returnable !1 mailbox type*)
             let default_ty = function
                 | Pretype.PInterface iname ->
-                        Some Type.(mailbox_send_unit iname Quasilinearity.Returnable)
+                        Some Type.(mailbox_send_unit iname Quasilinearity.Returnable pos)
                 | pty -> Pretype.to_type pty
             in
             let get_check_ty pty = function
@@ -632,7 +632,7 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                'fail'.)
              *)
             let pat_constrs =
-                Constraint_set.single_constraint pattern guards_pat
+                Constraint_set.single_constraint pattern guards_pat Constraint.Guard
             in
             let constrs =
                 Constraint_set.union_many
@@ -694,7 +694,7 @@ and check_guards :
               Constraint_set.union_many
                 [g_constrs; env_constrs; acc_constrs] in
             (env, Pattern.Plus (pat, g_pat), constrs) )
-          (Nullable_env.null, Pattern.Zero, Constraint_set.empty) gs
+          (Nullable_env.null, Pattern.Zero (Pattern.find_pos guard_pat), Constraint_set.empty) gs
 
 (* Checks the type for a single guard, returning type, environment, pattern,
    and constraint set. *)
@@ -803,13 +803,18 @@ and check_guard :
                    type. *)
                 let deriv = Pattern.tag_derivative tag pat in
                 let constrs =
-                      Constraint_set.single_constraint deriv mb_pat
+                      Constraint_set.single_constraint deriv mb_pat Constraint.Guard
                       |> Constraint_set.union cont_constrs
                       |> Constraint_set.union payload_ty_constrs
                 in
+
+                (* Find the tags' pos in the Guard pattern *)
+                let res, message_pos = Pattern.find_message_pos pat tag in
+                let _ = if res then message_pos else pos in
+
                 (* Final calculated pattern is the message concatenated with the
                    calculated resulting pattern. *)
-                let res_pat =  Pattern.(Concat (Message tag, deriv)) in
+                let res_pat =  Pattern.(Concat (Message (tag, pos), deriv)) in
                 (Nullable_env.of_env env, res_pat, constrs)
             | Empty (mailbox_binder, e) ->
                 let (env, constrs) = check_comp ienv decl_env e ty in
@@ -821,7 +826,7 @@ and check_guard :
                     Type.Mailbox {
                         capability = Capability.In;
                         interface = iname;
-                        pattern = Some One;
+                        pattern = Some (One pos);
                         quasilinearity = Quasilinearity.Returnable;
                     }
                 in
@@ -838,10 +843,10 @@ and check_guard :
                     |> Ty_env.delete_binder mailbox_binder
                     |> Nullable_env.of_env
                 in
-                (env, One,
+                (env, One pos,
                     Constraint_set.union mb_empty_constr constrs)
             | Fail ->
-                (Nullable_env.null, Zero, Constraint_set.empty)
+                (Nullable_env.null, Zero pos, Constraint_set.empty)
 
 (* Declarations have a top-level annotation, so it only makes sense to check them. *)
 (* The result of checking each definition should be a typing environment with a

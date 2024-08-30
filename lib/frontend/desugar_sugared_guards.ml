@@ -23,12 +23,13 @@ let visitor =
             let open Sugar_ast in
             let open Source_code in
             let expr_node = WithPos.node expr_with_pos in
+            let expr_pos = WithPos.pos expr_with_pos in
             match expr_node with
             | SugarFail (e, ty) ->
               let new_target = self#visit_expr env e in
               let new_guard = Guard {
                 target = new_target;
-                pattern = Type.Pattern.Zero;
+                pattern = Type.Pattern.Zero expr_pos;
                 guards = [WithPos.make ~pos:(WithPos.pos new_target) (Fail ty)];
                 iname = None
               } in

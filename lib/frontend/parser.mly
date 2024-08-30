@@ -9,6 +9,7 @@ module type Pos = sig
     (* Type of positions. *)
     type t
     val with_pos : t -> 'a -> 'a WithPos.t
+    val pos : t -> Position.t
 end
 
 module ParserPosition
@@ -25,6 +26,8 @@ end
 
 let get_start_pos e = Position.start (WithPos.pos e)
 let get_end_pos e = Position.finish (WithPos.pos e)
+
+let pos_make start finish = ParserPosition.pos (start, finish)
 
 (* Helper function to create an expression/interface/decl with a position *)
 let with_pos_from_positions p1 p2 newE = ParserPosition.with_pos (p1, p2) newE
@@ -266,13 +269,13 @@ star_pat:
     | simple_pat        { $1 }
 
 simple_pat:
-    | CONSTRUCTOR { Type.Pattern.Message $1 }
+    | CONSTRUCTOR { Type.Pattern.Message ($1,(pos_make $startpos $endpos)) }
     | INT {
             match $1 with
-                | 0 -> Type.Pattern.Zero
-                | 1 -> Type.Pattern.One
+                | 0 -> Type.Pattern.Zero (pos_make $startpos $endpos)
+                | 1 -> Type.Pattern.One (pos_make $startpos $endpos)
                 | _ -> raise (parse_error "Invalid pattern: expected 0 or 1." 
-                                [Position.make ~start:$startpos ~finish:$endpos ~code:!source_code_instance])
+                                [pos_make $startpos $endpos])
         }
     | LEFT_PAREN pat RIGHT_PAREN { $2 }
 
@@ -282,7 +285,7 @@ ql:
             | "R" -> Type.Quasilinearity.Returnable
             | "U" -> Type.Quasilinearity.Usable
             | _ -> raise (parse_error "Invalid usage: expected U or R." 
-                            [Position.make ~start:$startpos ~finish:$endpos ~code:!source_code_instance])
+                            [pos_make $startpos $endpos])
     }
 
 mailbox_ty:
@@ -322,7 +325,7 @@ base_ty:
             | "Bool" -> Base.Bool
             | "String" -> Base.String
             | _ -> raise (parse_error "Expected Atom, Unit, Int, Bool, or String"
-                            [Position.make ~start:$startpos ~finish:$endpos ~code:!source_code_instance])
+                            [pos_make $startpos $endpos])
     }
 
 message_ty:

@@ -82,3 +82,23 @@ let print_error ?(note="ERROR") err =
 let print_debug err =
     Format.fprintf std_formatter "[\027[34mDEBUG\027[0m] %s\n" err
 
+(* Prints an error with pattern information *)
+let print_solver_error ?(note="ERROR") ?(rhs=None) ?(pos2=None) err lhs pos1 =
+    let red = "\027[31m" 
+    and reset = "\027[0m" 
+    in
+    let rhs_str = match rhs with
+        | Some r -> Printf.sprintf "\n[%sRHS: %s%s]\n" red r reset
+        | None -> ""
+    in
+    let pos2_str = match pos2 with
+        | Some p -> p
+        | None -> ""
+    in
+    let pos_info = 
+        Printf.sprintf "\n[%sLHS: %s%s]\n" red lhs reset
+        ^ pos1
+        ^ rhs_str
+        ^ pos2_str
+    in
+    Format.fprintf err_formatter "[\027[31m%s\027[0m] %s %s\n" note err pos_info
